@@ -1,12 +1,47 @@
+# Python
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+*$py.class
+*.egg
 *.egg-info/
-.pytest_cache/
-.mypy_cache/
+.eggs/
 dist/
 build/
+pip-wheel-metadata/
+
+# Tests / type checkers
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# JAX / sim artifacts
+.jax_cache/
 examples/out/
 *.png
+*.npz
+*.npy
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+
+# Editors / OS / Synology Drive
+.idea/
+.vscode/
+.cursor/
 .DS_Store
-.jax_cache/
+Thumbs.db
+*~
+*.orig
+@eaDir/
+#recycle/
+.SynologyWorkingDirectory
+desktop.ini
