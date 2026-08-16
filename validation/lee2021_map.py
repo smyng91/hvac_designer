@@ -17,6 +17,8 @@ from heatpump.validation import compare_lee2021_map, default_maps_dir, default_r
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     path = default_maps_dir() / "lee2021_iop1180_012041.json"
     rep = compare_lee2021_map(path)
     src = rep["source"]
@@ -41,7 +43,7 @@ def main() -> None:
     dest = default_results_dir()
     dest.mkdir(parents=True, exist_ok=True)
     out = dest / "lee2021_table4.json"
-    out.write_text(json.dumps(rep, indent=2, default=str))
+    out.write_text(json.dumps(rep, indent=2, default=str), encoding="utf-8")
     print(f"wrote {out}")
 
 

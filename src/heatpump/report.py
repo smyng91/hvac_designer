@@ -18,14 +18,18 @@ Results are the vapor-compression balances closed with CoolProp HEOS
 This is not an AHRI 210/240 or EN 14511 rating.
 
 - Saturation and (p, h) states: CoolProp Helmholtz EOS for the named fluid.
-- Compressor: clearance volumetric efficiency and a polytropic isentropic
-  rise at the user-supplied η_is. Displacement is inverted from the
-  design mass flow.
+- Design compressor: displacement is inverted from the design mass flow
+  using clearance volumetric efficiency. Discharge enthalpy at design uses
+  the same polytropic isentropic rise as the JAX residual (optional HEOS
+  isentropic close via compression='heos'). Default n_e=n_c=6 plants then
+  scale V_disp and A_eev so a short residual settle meets Q_load; that
+  scale is a plant consistency step, not a laboratory fit.
 - EEV: isenthalpic orifice ṁ = Cd A u √(2ρ Δp) with A sized at the
-  design opening.
+  design opening (default Cd = 0.70, u_design = 0.40).
 - Coils: tube count is iterated until ε-NTU heat rate equals the cycle
-  duty. Refrigerant HTC is Dittus–Boelter (single-phase) or Shah
-  (two-phase). Air-side HTC is Zhukauskas cross-flow over a tube bank.
+  duty. Refrigerant HTC is Dittus–Boelter (single-phase) or a Shah-type
+  multiplier (two-phase), not the full Shah (1979) correlation. Air-side
+  HTC is Zhukauskas cross-flow over a tube bank.
   Wall capacitance is ρ_cu c_p,cu A t_wall.
 - Charge is the integral of Zivi / flashed density on the design
   enthalpy profile and the internal volume (same cells as the plant).
@@ -73,6 +77,7 @@ class DesignPackage:
     notes: tuple[str, ...]
     summary_text: str
     assumptions: str = ASSUMPTIONS
+    hardware: dict | None = None
 
     @property
     def ok(self) -> bool:
@@ -175,6 +180,7 @@ class DesignPackage:
             "controller": self.controller,
             "ok": self.ok,
             "gates": [asdict(g) for g in self.gates.gates],
+            "hardware": self.hardware,
             "heating_map": cmap(self.heating_map),
             "cooling_map": cmap(self.cooling_map),
             "psychro": asdict(self.psychro) if self.psychro else None,
@@ -187,8 +193,8 @@ class DesignPackage:
     def write(self, path: str | Path) -> Path:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.to_markdown())
-        path.with_suffix(".json").write_text(json.dumps(self.to_json(), indent=2, default=str))
+        path.write_text(self.to_markdown(), encoding="utf-8")
+        path.with_suffix(".json").write_text(json.dumps(self.to_json(), indent=2, default=str), encoding="utf-8")
         return path
 
     def plot(self, path: str | Path) -> Path | None:
@@ -217,6 +223,40 @@ class DesignPackage:
         fig.savefig(path, dpi=140)
         plt.close(fig)
         return path
+
+    def write_latex_macros(self, dest: str | Path) -> Path:
+        """Hardware / map numbers for the manuscript (no invented values)."""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        hw = self.hardware or {}
+        hm = self.heating_map
+        t_bal = ""
+        if hm is not None and hm.T_balance is not None:
+            tb = float(hm.T_balance) - 273.15
+            t_bal = f"{0.0 if abs(tb) < 0.05 else tb:.2f}"
+        margin = "" if hm is None else f"{hm.margin_design:.2f}"
+        lines = [
+            f"\\newcommand{{\\DesignFluid}}{{{self.fluid}}}",
+            f"\\newcommand{{\\DesignVdispCmThree}}{{{hw.get('V_disp_m3', float('nan')) * 1e6:.1f}}}",
+            f"\\newcommand{{\\DesignAeevMmTwo}}{{{hw.get('A_eev_m2', float('nan')) * 1e6:.2f}}}",
+            f"\\newcommand{{\\DesignCd}}{{{hw.get('Cd', float('nan')):.2f}}}",
+            f"\\newcommand{{\\DesignCloss}}{{{hw.get('C_loss', float('nan')):.3f}}}",
+            f"\\newcommand{{\\DesignEtaIs}}{{{hw.get('eta_is', float('nan')):.2f}}}",
+            f"\\newcommand{{\\DesignNtubesIn}}{{{hw.get('n_tubes_indoor', 'NA')}}}",
+            f"\\newcommand{{\\DesignNtubesOut}}{{{hw.get('n_tubes_outdoor', 'NA')}}}",
+            f"\\newcommand{{\\DesignNe}}{{{hw.get('n_e', 'NA')}}}",
+            f"\\newcommand{{\\DesignNc}}{{{hw.get('n_c', 'NA')}}}",
+            f"\\newcommand{{\\DesignNstateDry}}{{{hw.get('n_state_dry', 'NA')}}}",
+            f"\\newcommand{{\\DesignUAenv}}{{{hw.get('UA_env', float('nan')):.1f}}}",
+            f"\\newcommand{{\\DesignCzonekJK}}{{{hw.get('C_zone', float('nan')) / 1e3:.1f}}}",
+            f"\\newcommand{{\\DesignNHz}}{{{hw.get('N_design_Hz', float('nan')):.0f}}}",
+            f"\\newcommand{{\\DesignChargeKg}}{{{self.charge_kg:.3f}}}",
+            f"\\newcommand{{\\DesignTbalanceC}}{{{t_bal}}}",
+            f"\\newcommand{{\\DesignMargin}}{{{margin}}}",
+            f"\\newcommand{{\\DesignPlantScale}}{{{hw.get('plant_match_scale', 1.0):.3f}}}",
+        ]
+        dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return dest
 
 
 def _electrical(W: float, voltage: float, phases: int, eta_motor: float | None) -> Electrical:
@@ -291,12 +331,32 @@ def build_report(system) -> DesignPackage:
         charge = max(system.heating.charge_kg, system.cooling.charge_kg)
     indoor_n = spec.indoor.n_tubes if spec.indoor else spec.n_tubes_c
     outdoor_n = spec.outdoor.n_tubes if spec.outdoor else spec.n_tubes_e
-    hardware = (
+    hardware_text = (
         f"Compressor V_disp = {spec.V_disp*1e6:.1f} cm³/rev, "
         f"EEV {spec.A_eev*1e6:.2f} mm². "
         f"Indoor {indoor_n} tubes, outdoor {outdoor_n} tubes. "
         f"Zone UA = {spec.UA_env:.1f} W/K, C = {spec.C_zone/1e3:.1f} kJ/K."
     )
+    hardware = {
+        "V_disp_m3": float(spec.V_disp),
+        "A_eev_m2": float(spec.A_eev),
+        "Cd": float(spec.Cd),
+        "C_loss": float(spec.C_loss),
+        "eta_is": float(spec.eta_is0),
+        "n_tubes_indoor": int(indoor_n),
+        "n_tubes_outdoor": int(outdoor_n),
+        "n_e": int(spec.n_e),
+        "n_c": int(spec.n_c),
+        "n_state_dry": int(3 + 2 * spec.n_e + 2 * spec.n_c),
+        "UA_env": float(spec.UA_env),
+        "C_zone": float(spec.C_zone),
+        "N_design_Hz": float(spec.N_design),
+        "plant_match_scale": float(
+            (system.heating or system.cooling).plant_match_scale
+            if (system.heating or system.cooling) is not None
+            else 1.0
+        ),
+    }
     return DesignPackage(
         fluid=spec.fluid,
         mode=req.mode,
@@ -308,5 +368,6 @@ def build_report(system) -> DesignPackage:
         electrical=_electrical(W, req.voltage, req.phases, req.eta_motor),
         charge_kg=float(charge),
         notes=tuple(dict.fromkeys(notes)),
-        summary_text=hardware,
+        summary_text=hardware_text,
+        hardware=hardware,
     )

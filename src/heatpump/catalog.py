@@ -49,7 +49,7 @@ def _resolve(base: Path, rel: str) -> Path:
 
 def load_catalog(path: str | Path) -> Catalog:
     path = Path(path)
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     cite = str(raw.get("citation") or "").strip()
     if not cite:
         raise ValueError(f"{path}: catalog must name its source in 'citation' (no anonymous SKU list)")

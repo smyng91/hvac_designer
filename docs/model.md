@@ -62,7 +62,7 @@ y=\bigl[p_e,\; h_e^{(1:n_e)},\; T_{w,e}^{(1:n_e)},\;
         W_z^{(\mathrm{opt})},\; m_\mathrm{fr}^{(\mathrm{opt})}\bigr].
 ```
 
-Default mesh $`n_e=n_c=6`$ (31 states, dry). $`W_z`$ and $`m_\mathrm{fr}`$
+Default mesh $`n_e=n_c=6`$ (27 states, dry). $`W_z`$ and $`m_\mathrm{fr}`$
 are appended only with user `moist` / `frost` and user RH.
 
 ```math
@@ -211,12 +211,15 @@ Air is quasi-steady. Series UA:
 \frac{1}{UA}=\frac{1}{h_r A_r}+\frac{1}{h_a A_a}.
 ```
 
-Heat to the refrigerant is this equilibrium $`Q`$. Wall is slaved,
+Air is marched cell-wise against the **refrigerant** temperature with
+that series $`UA`$ (not against $`T_w`$). Heat to the refrigerant is
+this equilibrium $`Q`$. A slaved wall ODE
 $`\dot T_w=(T_w^\mathrm{ss}-T_w)/\tau`$ with $`\tau\ge 2\,\mathrm{s}`$
-(integrability floor, not a capacity derate). Fan fraction scales
-$`h_a`$ and $`\dot m_a`$. Design $`h_a`$: Zhukauskas tube-bank.
+is integrated for frost and diagnostics; $`T_w`$ does not enter the
+air-to-refrigerant energy close. Fan fraction scales $`h_a`$ and
+$`\dot m_a`$. Design $`h_a`$: Zhukauskas tube-bank.
 
-Sign: $`Q_\mathrm{air}`$ is heat from air to the wall.
+Sign: $`Q_\mathrm{air}`$ is heat from air to the coil.
 
 ```math
 Q_\mathrm{zone}=\begin{cases}
@@ -288,9 +291,12 @@ windup.
 
 ## 6. Design
 
-Four-point CoolProp cycle: (1) dew + SH, (2)
-$`h_1+(h_{2s}-h_1)/\eta_\mathrm{is}`$, (3) bubble − SC, (4) $`h_3`$ at
-$`p_e`$.
+Four-point CoolProp cycle: (1) dew + SH, (2) polytropic discharge
+enthalpy matching the JAX residual,
+$`h_1+\Delta h_\mathrm{is}/\eta_\mathrm{is}`$ with
+$`\Delta h_\mathrm{is}=\frac{\gamma}{\gamma-1}(p_s/\rho_s)(\Pi^{(\gamma-1)/\gamma}-1)`$,
+(3) bubble − SC, (4) $`h_3`$ at $`p_e`$. Pass `compression='heos'` to
+use CoolProp $`h(p_c,s_1)`$ instead.
 
 ```math
 T_e=T_{\mathrm{air},e}-\Delta T_\mathrm{evap},\qquad
@@ -311,6 +317,13 @@ Tube count is iterated until ε-NTU $`Q`$ equals cycle duty. Air flow
 from $`Q=\varepsilon\dot m_a c_p\Delta T`$. Wall capacitance
 $`\rho_\mathrm{cu}c_{p,\mathrm{cu}}A t_w`$. Charge is Zivi / flashed
 density on the design profile times internal volume.
+
+Default $`n_e=n_c=6`$ then scales $`V_\mathrm{disp}`$ and $`A_\mathrm{eev}`$
+so a short implicit-Euler settle of the residual (zone $`T`$ held) meets
+$`Q_\mathrm{load}`$ at $`N_\mathrm{des}`$. That scale is a sizer–plant
+consistency step, not a laboratory fit. Pass `match_plant=False` to keep
+the algebraic inversion only. Coarse meshes (`n_e<6`) skip it unless
+`match_plant=True`.
 
 From a timeseries with no nameplate:
 
@@ -460,11 +473,12 @@ Unfitted literature comparisons: [validation/](../validation/README.md).
 - H. Qiao, V. Aute, and R. Radermacher, *Int. J. Refrigeration*, 2015.
 - M. E. Hosea and L. F. Shampine, *Applied Numerical Mathematics*, 1996.
 - S. M. Zivi, *J. Heat Transfer*, 1964.
-- M. M. Shah, *Int. J. Heat Mass Transfer*, 1979.
-- J. C. Chen, *I&EC Process Design and Development*, 1966.
+- M. M. Shah, *Int. J. Heat Mass Transfer*, 1979 (cited for the two-phase
+  multiplier family; the residual uses a simplified Shah-type factor on
+  Dittus–Boelter, not the full 1979 correlation).
 - I. H. Bell et al., *Ind. Eng. Chem. Res.*, 2014 (CoolProp).
-- H. Ramírez-León, J. Jiménez-Cabas, and A. Bula, *Data in Brief*, 2019, doi:10.1016/j.dib.2019.104316.
+- H. Ramírez, J. Jiménez-Cabas, and A. Bula, *Data in Brief*, 2019, doi:10.1016/j.dib.2019.104316.
 - S. Ramaraj and B. Sparn, NLR Data Catalog, 2024, doi:10.7799/2440214.
-- C.-Y. Lee et al., *IOP Conf. Ser.: Mater. Sci. Eng.* 1180 (2021) 012041.
+- C.-Y. Lee, T. Cao, Y. Hwang, R. Radermacher, and S. Shaffer, *IOP Conf. Ser.: Mater. Sci. Eng.* 1180 (2021) 012041.
 - Y. Hayashi et al., *J. Heat Transfer*, 1977.
 - J. D. Yonko and C. F. Sepsy, *ASHRAE Trans.*, 1967.

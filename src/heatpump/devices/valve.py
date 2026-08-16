@@ -16,5 +16,9 @@ class OrificeEEV:
     A_max: float
     Cd: float = 0.70
 
+    @classmethod
+    def from_plant(cls, spec) -> OrificeEEV:
+        return cls(spec.A_eev, spec.Cd)
+
     def map(self, p_in: Array, p_out: Array, rho_in: Array, opening: Array) -> Array:
         return eev_mdot(p_in, p_out, rho_in, opening, self.A_max, self.Cd)

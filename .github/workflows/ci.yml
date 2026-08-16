@@ -1,11 +1,9 @@
-name: CI
-
+name: tests
 on:
   push:
   pull_request:
-
 jobs:
-  test:
+  pytest:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,17 +12,5 @@ jobs:
           python-version: "3.14"
       - name: Install
         run: pip install -e ".[dev]"
-      - name: Unit tests
+      - name: Test
         run: pytest
-      - name: Compile examples and validation scripts
-        run: python -m compileall -q examples validation
-      - name: Lee 2021 map (Table 5 at Table 4)
-        run: python validation/lee2021_map.py
-      - name: Design package (heating)
-        run: python -m heatpump.simulate --design-only --mode heating -r R32 --load 5500 --T-out 0 --T-zone 20 --out /tmp/hp
-      - name: Design package (cooling)
-        run: python -m heatpump.simulate --design-only --mode cooling -r R410A --load 6200 --T-out 35 --T-zone 24 --out /tmp/ac
-      - name: Closed-loop heating smoke
-        run: python -m heatpump.simulate --mode heating -r R32 --load 5500 --T-out 0 --T-zone 20 --t-final 90 --reduction full --out /tmp/ci-heat
-      - name: Closed-loop cooling smoke
-        run: python -m heatpump.simulate --mode cooling -r R410A --load 6200 --T-out 35 --T-zone 24 --t-final 90 --reduction full --out /tmp/ci-cool

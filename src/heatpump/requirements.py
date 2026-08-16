@@ -250,6 +250,8 @@ class DesignRequest:
     phases: int = 1
     eta_motor: float | None = None
     V_zone: float | None = None
+    match_plant: bool | None = None
+    compression: str = "polytropic"
 
     def __post_init__(self) -> None:
         self.mode = _norm_mode(self.mode)

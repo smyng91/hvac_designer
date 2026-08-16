@@ -10,6 +10,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 OUT = ROOT / "output"
 WEATHER_COOL = Path(__file__).resolve().parent / "weather_cooling.csv"
 WEATHER_HEAT = Path(__file__).resolve().parent / "weather_heating.csv"

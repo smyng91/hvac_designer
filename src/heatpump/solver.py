@@ -251,13 +251,16 @@ def integrate_qss(
     dt_relax: float = 2.0,
     on_accept: Callable | None = None,
     slow_idx: tuple[int, ...] | None = None,
+    refresh_dN: float = 0.5,
+    refresh_du: float = 0.02,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Hour-to-day integrator: slow ODEs plus periodic refrigerant relax.
 
     Between refreshes the refrigerant state is held and only the slow
     states (zone temperature, optional humidity and frost mass) advance
-    with the residual. Every ``refresh_s`` the full DAE is relaxed with
-    implicit Euler (slow states held) so the cycle tracks outdoor T and N.
+    with the residual. The full DAE is relaxed with implicit Euler
+    (slow states held) every ``refresh_s``, and also when compressor
+    speed or EEV opening jumps, so capacity tracks the controller.
     """
     hold = tuple(slow_idx) if slow_idx is not None else (i_tz,)
     relax = make_qss_relax(rhs, project, i_tz, n_relax, dt_relax, slow_idx=hold)
@@ -268,16 +271,24 @@ def integrate_qss(
     rec_y = [np.asarray(y0)]
     next_rec = record_dt
     last_refresh = -1e9
+    last_N = None
+    last_u = None
     if on_accept is not None:
         on_accept(t, y)
     while t < t_final - 1e-12:
         dt = min(record_dt, t_final - t)
         u = jnp.asarray(u_of_t(t))
-        if t - last_refresh >= refresh_s - 1e-12:
+        N = float(np.asarray(u)[0])
+        ue = float(np.asarray(u)[1]) if u.size > 1 else 0.0
+        jumped = last_N is not None and (
+            abs(N - last_N) >= refresh_dN or abs(ue - last_u) >= refresh_du
+        )
+        if t - last_refresh >= refresh_s - 1e-12 or jumped:
             y = relax(jnp.float64(t), y, u)
             if project is not None:
                 y = project(y)
             last_refresh = t
+            last_N, last_u = N, ue
         dy = rhs(jnp.float64(t), y, u)
         y = y.at[hold_arr].set(y[hold_arr] + dt * dy[hold_arr])
         if project is not None:

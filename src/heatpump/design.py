@@ -14,6 +14,13 @@ from heatpump.hx import air_props, charge_from_profile, size_coil, zone_capacita
 from heatpump.requirements import Constraints, DesignRequest, cooling_tons_to_w
 from heatpump.thermo import FluidInfo, fluid_info, make_state, resolve_fluid
 
+
+def polytropic_dh_is_np(p_s: float, p_d: float, rho_s: float, gamma: float) -> float:
+    """NumPy twin of ``components.polytropic_dh_is`` (no JAX at sizing time)."""
+    pr = min(max(p_d / max(p_s, 1.0e4), 1.01), 12.0)
+    g = min(max(float(gamma), 1.05), 1.8)
+    return (g / (g - 1.0)) * (p_s / max(rho_s, 1.0)) * (pr ** ((g - 1.0) / g) - 1.0)
+
 if TYPE_CHECKING:
     from heatpump.plant import PlantSpec
 
@@ -66,6 +73,7 @@ class DesignReport:
     G_c: float = 0.0
     charge_kg: float = 0.0
     gates: GateSet | None = None
+    plant_match_scale: float = 1.0
 
     def summary(self) -> str:
         s = self.states
@@ -125,11 +133,16 @@ def design_cycle(
     DT_cond: float = 12.0,
     eta_is: float = 0.70,
     constraints=None,
+    compression: str = "polytropic",
 ) -> tuple[FluidInfo, dict[str, CyclePoint], dict[str, float], list[str]]:
     """Subcritical vapor-compression cycle from CoolProp.
 
     Heating: evaporator sees outdoor air, condenser sees the zone.
     Cooling: evaporator sees the zone, condenser sees outdoor air.
+
+    ``compression``:
+        * ``polytropic`` (default) — same ideal-gas rise as the JAX residual
+        * ``heos`` — CoolProp isentropic ``h(p_c, s_1)`` divided by ``η_is``
     """
     info = fluid_info(fluid)
     AS = make_state(info.name)
@@ -185,7 +198,14 @@ def design_cycle(
 
     AS.update(CP.PSmass_INPUTS, p_c, st1.s)
     h2s = float(AS.hmass())
-    h2 = st1.h + (h2s - st1.h) / max(eta_is, 0.35)
+    eta = min(max(float(eta_is), 0.20), 0.95)
+    kind_c = (compression or "polytropic").lower()
+    if kind_c in ("heos", "isentropic", "coolprop"):
+        h2 = st1.h + (h2s - st1.h) / eta
+    elif kind_c in ("polytropic", "plant"):
+        h2 = st1.h + polytropic_dh_is_np(st1.p, p_c, st1.rho, gamma) / eta
+    else:
+        raise ValueError("compression must be 'polytropic' or 'heos'")
     AS.update(CP.HmassP_INPUTS, h2, p_c)
     st2 = _point(AS, x=1.0)
 
@@ -226,6 +246,8 @@ def design_cycle(
         "pr": p_c / p_e,
         "SH": st1.T - T_dew_e,
         "SC": T_bubble_c - st3.T,
+        "compression": kind_c,
+        "h2s": h2s,
     }
 
     if p_c >= info.pc:
@@ -316,6 +338,58 @@ def _merge_coil(a, b):
     )
 
 
+def _match_plant_displacement(
+    spec,
+    kind: str,
+    Q_load: float,
+    T_out: float,
+    T_zone: float,
+    N_hz: float,
+    u_eev: float = _U_EEV_DESIGN,
+    n_iter: int = 3,
+):
+    """Scale ``V_disp`` and ``A_eev`` so a DAE settle at ``N_des`` meets ``Q_load``.
+
+    Calibrates the algebraic sizer to the finite-volume residual. It is not a
+    fit to laboratory data. Returns ``(spec, scale, Q_plant)``.
+    """
+    import jax.numpy as jnp
+
+    from heatpump.plant import diagnostics, initial_state, make_rhs, project_state
+    from heatpump.solver import make_qss_relax
+    from heatpump.thermo import build_tables
+
+    tables = build_tables(spec.fluid)
+    scale = 1.0
+    q = float("nan")
+    for _ in range(n_iter):
+        rhs = make_rhs(spec, tables)
+        layout = spec.layout
+        project = lambda z, lay=layout: project_state(z, tables, lay)
+        y = initial_state(spec, tables, T_out=T_out, T_zone=T_zone)
+        u = jnp.array([float(N_hz), float(u_eev), 1.0, 1.0, float(T_out), 0.0])
+        relax = make_qss_relax(
+            rhs,
+            project,
+            layout.i_tz,
+            n_relax=20,
+            dt_relax=2.0,
+            slow_idx=layout.slow_idx(),
+        )
+        y = relax(jnp.float64(0.0), y, u)
+        q = float(diagnostics(spec, tables, y, u)["Q_zone"])
+        if kind == "cooling":
+            q = -q
+        if not np.isfinite(q) or q < 200.0:
+            return spec, scale, q
+        fac = float(np.clip(float(Q_load) / q, 0.55, 1.80))
+        if abs(fac - 1.0) < 0.02:
+            return spec, scale, q
+        spec = replace(spec, V_disp=spec.V_disp * fac, A_eev=spec.A_eev * fac)
+        scale *= fac
+    return spec, scale, q
+
+
 def _design_mode(
     refrigerant: str,
     kind: str,
@@ -343,6 +417,8 @@ def _design_mode(
     L_c: float = _L_COND,
     fin_e: float = _FIN_EVAP,
     fin_c: float = _FIN_COND,
+    compression: str = "polytropic",
+    match_plant: bool | None = None,
     **spec_overrides,
 ) -> DesignReport:
     from heatpump.plant import PlantSpec, apply_operating_mode
@@ -363,6 +439,7 @@ def _design_mode(
         DT_cond=DT_cond,
         eta_is=eta_is,
         constraints=cons,
+        compression=compression,
     )
     Q_unit = float(oversize) * float(Q_load)
     if kind == "cooling":
@@ -448,8 +525,25 @@ def _design_mode(
     if spec_overrides:
         spec = replace(spec, **spec_overrides)
 
-    G_e = mdot / max(spec.n_tubes_e * 0.25 * pi * spec.D_e**2, 1e-10)
-    G_c = mdot / max(spec.n_tubes_c * 0.25 * pi * spec.D_c**2, 1e-10)
+    scale = 1.0
+    do_match = bool(match_plant) if match_plant is not None else (int(n_e) >= 6 and int(n_c) >= 6)
+    if do_match:
+        spec, scale, q_pl = _match_plant_displacement(
+            spec, kind, Q_unit, T_out, T_zone, N_hz
+        )
+        if np.isfinite(q_pl) and q_pl >= 200.0:
+            notes.append(
+                f"Displacement and EEV area scaled ×{scale:.3f} so a residual settle "
+                f"at N_des meets the stated duty (finite-volume plant, not a laboratory fit)."
+            )
+        else:
+            notes.append(
+                "Plant displacement matching did not return a finite duty; "
+                "algebraic inversion retained."
+            )
+
+    G_e = (mdot * scale) / max(spec.n_tubes_e * 0.25 * pi * spec.D_e**2, 1e-10)
+    G_c = (mdot * scale) / max(spec.n_tubes_c * 0.25 * pi * spec.D_c**2, 1e-10)
     charge = charge_from_profile(
         info.name,
         states,
@@ -509,6 +603,7 @@ def _design_mode(
         G_c=float(G_c),
         charge_kg=float(charge),
         gates=gates,
+        plant_match_scale=float(scale),
     )
 
 
@@ -519,7 +614,12 @@ def design_heat_pump(
     T_zone: float = 293.15,
     **kwargs,
 ) -> DesignReport:
-    """Size compressor, EEV, coils, and zone for a heating load [W]."""
+    """Size compressor, EEV, coils, and zone for a heating load [W].
+
+    Discharge enthalpy uses the same polytropic map as the JAX residual.
+    With default ``n_e=n_c=6``, displacement is then scaled so a short
+    residual settle meets ``Q_load`` (pass ``match_plant=False`` to skip).
+    """
     return _design_mode(refrigerant, "heating", Q_load, T_out, T_zone, **kwargs)
 
 
@@ -637,6 +737,8 @@ def design_system(request: DesignRequest | None = None, **kwargs) -> SystemDesig
         UA_env=req.UA_env,
         C_zone=req.C_zone,
         V_zone=req.V_zone,
+        match_plant=req.match_plant,
+        compression=req.compression,
     )
 
     if req.mode in ("heating", "heat_pump"):
@@ -735,6 +837,8 @@ _DESIGN_KEYS = {
     "L_c",
     "fin_e",
     "fin_c",
+    "match_plant",
+    "compression",
 }
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -183,7 +184,7 @@ def _run_span(
             on_accept=_on,
         )
         if duration > warm + 1e-9:
-            refresh = (
+            refresh = rec if duration < 7200.0 else (
                 min(600.0, max(rec, 30.0)) if duration >= 86400.0 else min(120.0, max(rec, 30.0))
             )
             t_q, Y_q = integrate_qss(
@@ -287,8 +288,18 @@ def simulate(
         controller = "pid"
 
     tables = tables or build_tables(spec.fluid)
+    ctl_name = controller.lower() if isinstance(controller, str) else ""
+    is_mpc = isinstance(controller, (LinearMPC, NonlinearMPC)) or ctl_name in (
+        "mpc",
+        "lmpc",
+        "nmpc",
+        "nonlinear-mpc",
+    )
     kind = (reduction or "auto").lower()
-    if kind == "auto":
+    if is_mpc:
+        # MPC unrolls implicit Euler on the full residual; QSS would be a different plant.
+        kind = "full"
+    elif kind == "auto":
         kind = "qss" if t_final >= 3600.0 else "full"
     rec = float(record_dt)
     if kind == "qss" and t_final >= 7200.0 and rec < 30.0:
@@ -361,7 +372,11 @@ def simulate(
             dt_c = rec
             if isinstance(ctl, (LinearMPC, NonlinearMPC)):
                 ctl.Tsp = tsp
-                u_exog = jnp.array([40.0, 0.4, 1.0, 1.0, Tamb, Qg])
+                u_exog = jnp.asarray(u_guess)
+                if u_exog.size < 6:
+                    u_exog = jnp.array([40.0, 0.4, 1.0, 1.0, Tamb, Qg])
+                else:
+                    u_exog = u_exog.at[4].set(Tamb).at[5].set(Qg)
                 out = ctl.update(t, meas, dt_c, y, u_exog)
             else:
                 out = ctl.update(t, meas, dt_c)
@@ -507,6 +522,8 @@ def plot_result(res: SimResult, path: Path, title: str = "") -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     p = argparse.ArgumentParser(
         description=(
             "Size and simulate an air-source heat pump or air conditioner. "
@@ -516,7 +533,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument(
         "--controller",
         default="auto",
-        choices=["auto", "pid", "hysteresis", "bangbang", "mpc", "nmpc"],
+        choices=["auto", "pid", "hysteresis", "bangbang", "mpc", "lmpc", "nmpc"],
     )
     p.add_argument("--mode", default="auto", choices=["auto", "heating", "cooling", "heat_pump"])
     p.add_argument("--refrigerant", "-r", default="R32", help="CoolProp fluid name")
@@ -681,8 +698,8 @@ def main(argv: list[str] | None = None) -> None:
         )
         dest = Path(args.out) / "seasonal.md"
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(bins.to_markdown())
-        dest.with_suffix(".json").write_text(json.dumps(bins.to_json(), indent=2))
+        dest.write_text(bins.to_markdown(), encoding="utf-8")
+        dest.with_suffix(".json").write_text(json.dumps(bins.to_json(), indent=2), encoding="utf-8")
         print(f"wrote {dest} ({len(bins.bins)} bins, {bins.hours_total:.1f} h from the record)")
     if args.design_only:
         return

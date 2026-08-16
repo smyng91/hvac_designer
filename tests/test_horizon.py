@@ -50,6 +50,8 @@ def test_qss_hour_reaches_horizon():
     assert np.isfinite(res.meas["COP"][-1])
     # Controller + QSS must heat the zone, not drift with a frozen u(t).
     assert res.meas["T_z"][-1] > res.meas["T_z"][0]
+    # With polytropic design the QSS plant must heat; 4 K is a loose bound
+    # (n_e=4 skips DAE displacement matching).
     assert res.meas["T_z"][-1] > 293.15 - 4.0
 
 

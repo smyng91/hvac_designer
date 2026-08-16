@@ -236,7 +236,7 @@ class Cascade:
 def scaled_pid_gains(spec, constraints, mode: str) -> tuple[float, float, float]:
     """Trim around load feedforward. Signs: heating +e → +N, cooling +e → −N."""
     scale = constraints.N_max / 70.0
-    kp, ki, kd = 4.0 * scale, 0.06 * scale, 1.2 * scale
+    kp, ki, kd = 4.0 * scale, 0.10 * scale, 1.2 * scale
     if mode == "cooling":
         return -abs(kp), -abs(ki), -abs(kd)
     return kp, ki, kd
@@ -248,6 +248,7 @@ def make_cascade(
     Tsp: float = 293.15,
     spec=None,
     constraints=None,
+    Q_design: float = 0.0,
 ) -> Cascade:
     from heatpump.requirements import Constraints
 
@@ -258,7 +259,7 @@ def make_cascade(
             kp, ki, kd = scaled_pid_gains(spec, cons, mode)
         else:
             s = -1.0 if mode == "cooling" else 1.0
-            kp, ki, kd = s * 4.0, s * 0.06, s * 1.2
+            kp, ki, kd = s * 4.0, s * 0.10, s * 1.2
         # Trim around feedforward; full range so a large zone error can still saturate.
         speed = PID(kp=kp, ki=ki, kd=kd, umin=-cons.N_max, umax=cons.N_max, kaw=0.4)
     elif kind == "hysteresis":
@@ -282,6 +283,7 @@ def make_cascade(
         N_max=cons.N_max,
         N_design=N_des,
         UA=UA,
+        Q_design=float(Q_design),
     )
 
 
@@ -316,8 +318,8 @@ class LinearMPC:
     r_N: float = 8e-4
     r_eev: float = 12.0
     s_N: float = 2e-5
-    N_bounds: tuple[float, float] = (0.0, 80.0)
-    eev_bounds: tuple[float, float] = (0.08, 0.90)
+    N_bounds: tuple[float, float] = (0.0, 70.0)
+    eev_bounds: tuple[float, float] = (0.10, 0.72)
     fan_i: float = 1.0
     fan_o: float = 1.0
     mode: str = "heating"
@@ -343,8 +345,20 @@ class LinearMPC:
         f_j = jax.jit(f)
         self._lin = (f_j, dfdy, dfdu)
 
+    def _implicit_maps(self, Af: np.ndarray, h: float) -> np.ndarray:
+        """Discrete A = (I - h Af)^{-1}. Regularize; never fall back to explicit Euler."""
+        n = Af.shape[0]
+        eye = np.eye(n)
+        ridge = 0.0
+        for _ in range(6):
+            try:
+                return np.linalg.solve(eye - h * Af + ridge * eye, eye)
+            except np.linalg.LinAlgError:
+                ridge = 1e-8 if ridge == 0.0 else ridge * 10.0
+        raise np.linalg.LinAlgError("implicit-Euler linearization is singular")
+
     def update(self, t: float, meas: dict, dt: float, y: Array, u_exog: Array) -> ControlOutput:
-        del t, dt, meas
+        del t, meas
         self._ensure_lin()
         f_j, dfdy, dfdu = self._lin
         y = jnp.asarray(y)
@@ -352,15 +366,19 @@ class LinearMPC:
         Af = np.nan_to_num(np.asarray(dfdy(y, u0)), nan=0.0, posinf=0.0, neginf=0.0)
         Bf = np.nan_to_num(np.asarray(dfdu(y, u0))[:, :2], nan=0.0, posinf=0.0, neginf=0.0)
         f0 = np.nan_to_num(np.asarray(f_j(y, u0)), nan=0.0, posinf=0.0, neginf=0.0)
-        y0 = np.asarray(y)
+        y0 = np.asarray(self.project(y))
         u0c = np.asarray(u0)[:2]
-        h = self.dt
-        # Implicit Euler linearization (L-stable, matches the plant solver).
-        Aop = np.eye(y0.size) - h * Af
+        h = float(dt) if dt is not None and dt > 0.0 else float(self.dt)
+        self.dt = h
+        # Implicit Euler linearization of the residual (not TR-BDF2).
         try:
-            A = np.linalg.solve(Aop, np.eye(y0.size))
+            A = self._implicit_maps(Af, h)
         except np.linalg.LinAlgError:
-            A = np.eye(y0.size) + h * Af
+            eT = float(y0[self.i_tz] - self.Tsp)
+            sign = 8.0 if self.mode == "cooling" else -8.0
+            N = float(np.clip(u0c[0] + sign * eT, *self.N_bounds))
+            eev = float(np.clip(u0c[1], *self.eev_bounds))
+            return ControlOutput(N=N, eev=eev, fan_i=self.fan_i, fan_o=self.fan_o)
         B = A @ (h * Bf)
         c = A @ (h * (f0 - Af @ y0 - Bf @ u0c))
 
@@ -370,7 +388,7 @@ class LinearMPC:
         d = np.zeros(H * nx)
         xpred = y0.copy()
         for k in range(H):
-            xpred = A @ xpred + c
+            xpred = np.asarray(self.project(jnp.asarray(A @ xpred + c)))
             d[k * nx : (k + 1) * nx] = xpred
             Apow = np.eye(nx)
             for j in range(k, -1, -1):
@@ -439,10 +457,12 @@ class NonlinearMPC:
     r_N: float = 6e-4
     r_eev: float = 10.0
     n_iter: int = 8
-    N_bounds: tuple[float, float] = (0.0, 80.0)
-    eev_bounds: tuple[float, float] = (0.08, 0.90)
+    n_newton: int = 6
+    N_bounds: tuple[float, float] = (0.0, 70.0)
+    eev_bounds: tuple[float, float] = (0.10, 0.72)
     fan_i: float = 1.0
     fan_o: float = 1.0
+    mode: str = "heating"
     _U: np.ndarray | None = None
     _grad = None
 
@@ -450,21 +470,24 @@ class NonlinearMPC:
         self._U = None
 
     def set_mode(self, mode: str) -> None:
-        del mode
+        mode = "cooling" if mode == "cooling" else "heating"
+        if mode == self.mode:
+            return
+        self.mode = mode
         self.reset()
 
-    def _ensure(self, u_exog: Array):
+    def _ensure(self):
         if self._grad is not None:
             return
-        H = self.horizon
         i_tz, sh_fn, rhs, project = self.i_tz, self.sh_fn, self.rhs, self.project
-        dt, Tsp, sh_sp = self.dt, self.Tsp, self.sh_sp
+        Tsp, sh_sp = self.Tsp, self.sh_sp
         q_T, q_sh, r_N, r_eev = self.q_T, self.q_sh, self.r_N, self.r_eev
+        n_newton = int(self.n_newton)
 
-        def cost(U, y0, u_base):
+        def cost(U, y0, u_base, h):
             def body(y, ue):
                 u = u_base.at[0].set(ue[0]).at[1].set(ue[1])
-                yn = implicit_euler_step(rhs, 0.0, y, u, dt, project, n_newton=3)
+                yn = implicit_euler_step(rhs, 0.0, y, u, h, project, n_newton=n_newton)
                 eT = yn[i_tz] - Tsp
                 eS = sh_fn(yn) - sh_sp
                 return yn, q_T * eT**2 + q_sh * eS**2
@@ -477,19 +500,22 @@ class NonlinearMPC:
         self._cost = jax.jit(cost)
 
     def update(self, t: float, meas: dict, dt: float, y: Array, u_exog: Array) -> ControlOutput:
-        del t, dt, meas
-        self._ensure(u_exog)
+        del t, meas
+        self._ensure()
         H = self.horizon
+        h = float(dt) if dt is not None and dt > 0.0 else float(self.dt)
+        self.dt = h
         if self._U is None:
-            self._U = np.tile(np.array([45.0, 0.4]), (H, 1))
+            u0 = np.asarray(u_exog)
+            self._U = np.tile(np.array([float(u0[0]), float(u0[1])]), (H, 1))
         U = jnp.asarray(self._U)
-        y0 = jnp.asarray(y)
+        y0 = jnp.asarray(self.project(y))
         u_base = jnp.asarray(u_exog)
         lo = jnp.array([self.N_bounds[0], self.eev_bounds[0]])
         hi = jnp.array([self.N_bounds[1], self.eev_bounds[1]])
         lr = 0.25
         for _ in range(self.n_iter):
-            g = self._grad(U, y0, u_base)
+            g = self._grad(U, y0, u_base, h)
             U = jnp.clip(U - lr * g, lo, hi)
             lr *= 0.9
         self._U = np.array(U)
@@ -505,10 +531,19 @@ def make_mpc(
     Tsp: float = 293.15,
     nonlinear: bool = False,
     mode: str = "heating",
-    N_bounds: tuple[float, float] = (0.0, 80.0),
-    eev_bounds: tuple[float, float] = (0.08, 0.90),
+    N_bounds: tuple[float, float] = (0.0, 70.0),
+    eev_bounds: tuple[float, float] = (0.10, 0.72),
 ):
-    kw = dict(rhs=rhs, project=project, i_tz=i_tz, sh_fn=sh_fn, Tsp=Tsp, N_bounds=N_bounds, eev_bounds=eev_bounds)
+    kw = dict(
+        rhs=rhs,
+        project=project,
+        i_tz=i_tz,
+        sh_fn=sh_fn,
+        Tsp=Tsp,
+        N_bounds=N_bounds,
+        eev_bounds=eev_bounds,
+        mode=mode,
+    )
     if nonlinear:
         return NonlinearMPC(**kw)
-    return LinearMPC(**kw, mode=mode)
+    return LinearMPC(**kw)

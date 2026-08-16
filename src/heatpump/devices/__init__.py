@@ -1,11 +1,4 @@
-"""Swappable plant components.
-
-The residual uses built-in kernels when a ``PlantSpec`` slot is ``None``.
-Assign an object to retrofit::
-
-    spec = replace(spec, compressor=AHRI540Compressor.from_file(path))
-    spec = replace(spec, zone_model=MyZone(C, UA))
-"""
+"""Swappable plant devices (compressor, EEV, HTC, air-side, zone, fan)."""
 
 from heatpump.devices.ahri540 import AHRI540Compressor, ahri540_poly
 from heatpump.devices.air import SeriesUAAir, series_ua_air_q

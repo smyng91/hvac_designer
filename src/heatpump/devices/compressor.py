@@ -22,6 +22,10 @@ class ClearanceCompressor:
     eta_is: float = 0.70
     gamma: float = 1.25
 
+    @classmethod
+    def from_plant(cls, spec) -> ClearanceCompressor:
+        return cls(spec.V_disp, spec.C_loss, spec.eta_is0, spec.gamma)
+
     def map(
         self,
         p_s: Array,

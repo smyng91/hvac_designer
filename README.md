@@ -18,7 +18,15 @@ Equations render on the
 
 ## Install
 
-Requires **Python 3.14**.
+Requires **Python 3.14**. Prefer the lockfile:
+
+```bash
+uv sync --extra dev
+.venv/Scripts/activate          # Windows
+# source .venv/bin/activate     # Unix
+```
+
+Or:
 
 ```bash
 python3.14 -m venv .venv
@@ -37,6 +45,18 @@ pytest
 
 Outputs: `output/`. `--t-final 90` keeps the full DAE.
 Tutorial: [Quick start](docs/quickstart.md).
+
+## Validation
+
+Download the published Ramírez workbook and NREL HIL CSVs
+(`validation/data/SOURCES.md`), then:
+
+```bash
+python validation/run.py
+```
+
+Raw laboratory files are not stored in this repository. Derived
+on-period means and the validation report live in `validation/results/`.
 
 ## Scope
 

@@ -20,10 +20,11 @@ def series_ua_air_q(
     mdot_air: Array,
     cp_air: float,
 ) -> tuple[Array, Array]:
-    """Quasi-steady wall: Q from air to refrigerant is the series UA.
+    """Series-UA air heat rate against refrigerant temperature.
 
     1/UA = 1/(h_r A_r) + 1/(h_a A_a). Air is marched with that UA against
-    the refrigerant temperature (no wall ODE in the energy close).
+    the refrigerant temperature. The plant still integrates a slaved wall
+    ODE for ``T_w``; that wall state does not enter this energy close.
     """
     r = 1.0 / jnp.maximum(h_ref * A_ref, 1.0e-6) + 1.0 / jnp.maximum(h_air * A_air, 1.0e-6)
     UA = 1.0 / r

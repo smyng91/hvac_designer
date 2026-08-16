@@ -1,12 +1,11 @@
 """Literature validation uses the downloaded Ramírez workbook, not invented points."""
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
 from heatpump.validation import (
     RAMIREZ_SHA256,
+    _tex_sci,
     compare_lee2021_map,
     compare_ramirez,
     default_data_dir,
@@ -15,6 +14,7 @@ from heatpump.validation import (
     parse_nrel,
     parse_ramirez,
     read_xlsx_sheets,
+    raw_sources_complete,
 )
 
 XLSX = default_data_dir() / "ramirez2019_mmc1.xlsx"
@@ -59,6 +59,11 @@ def test_unsized_model_is_within_order_of_the_lab_capacity():
         assert row["pred_p_c_bar"] > row["pred_p_e_bar"] > 0.0
     assert "data/validation/" not in str(report["source"]["file"])
     assert str(report["source"]["file"]).startswith("validation/")
+    assert report["source"]["primary_source"] is True
+    assert report["source"]["cached_means"] is False
+    assert report["mape"]["n"] == 16
+    assert report["mape_enthalpy_band"]["n"] <= 16
+    assert report["mape_enthalpy_band"]["rule"].startswith("SI only")
 
 
 def test_lee2021_map_is_the_published_table5():
@@ -67,7 +72,35 @@ def test_lee2021_map_is_the_published_table5():
     report = compare_lee2021_map(path)
     assert report["coefficients_match_table5"]
     assert report["all_positive"]
-    assert "Table 6" in report["notes"][1]
+    assert any("Table 6" in n for n in report["notes"])
+    assert any("not a comparison to measured" in n for n in report["notes"])
+    assert report["jax_vs_numpy"]["n"] == 9
+    assert report["jax_vs_numpy"]["max_rel_power"] < 1.0e-10
+    assert report["jax_vs_numpy"]["max_rel_mdot"] < 1.0e-10
+
+
+def test_tex_sci_does_not_print_bare_zero():
+    assert _tex_sci(0.0) == r"<10^{-16}"
+    assert "10^{" in _tex_sci(1.23e-12)
+    assert "0" != _tex_sci(1e-20)
+
+
+def test_raw_sources_complete_when_xlsx_and_nrel_present():
+    ok, missing = raw_sources_complete()
+    if not XLSX.exists():
+        assert ok is False
+        return
+    nrel = default_data_dir() / "nrel_hil"
+    if not all((nrel / name).exists() for name in (
+        "HP_Cool_OAT95F_SP76F72F68F.csv",
+        "HP_Cool_OAT75F_SP72F68F.csv",
+        "HP_Heat_OAT45F_SP68F72F.csv",
+        "HP_Heat_OAT5F_SP72F.csv",
+    )):
+        assert ok is False
+        return
+    assert ok is True
+    assert missing == []
 
 
 def test_nrel_parser_skips_or_reads_downloaded_csvs():
@@ -80,3 +113,7 @@ def test_nrel_parser_skips_or_reads_downloaded_csvs():
         assert p["n_on"] > 0
         assert p["Q_W"] > 1000.0
         assert p["W_out_W"] > 500.0
+        assert p.get("primary_source") is True
+        assert p.get("cached_on_period") is False
+        assert p.get("Q_air_W") is not None
+        assert p.get("sha256")

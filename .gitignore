@@ -1,50 +1,34 @@
-# Python
+# Environments and caches
 .venv/
-venv/
+.pytest_cache/
 __pycache__/
 *.py[cod]
 *$py.class
-*.egg
 *.egg-info/
-.eggs/
-dist/
-build/
-pip-wheel-metadata/
-
-# Tests / type checkers
-.pytest_cache/
+src/*.egg-info/
 .mypy_cache/
 .ruff_cache/
-.hypothesis/
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
 
-# Large NREL HIL traces (re-download from doi:10.7799/2440214)
-validation/data/nrel_hil/*.csv
-
-# JAX / sim artifacts
-.jax_cache/
+# Local simulation and audit outputs
 output/
-*.png
 *.npz
-*.npy
 
-# Secrets and local env
-.env
-.env.*
-!.env.example
+# Manuscript and paper build (not part of the public code repo)
+/paper/
+/paper.tex
+/paper.pdf
 
-# Editors / OS / Synology Drive
-.idea/
-.vscode/
-.cursor/
+# Raw validation downloads (see validation/data/SOURCES.md)
+validation/data/ramirez2019_mmc1.xlsx
+validation/data/nrel_hil/
+validation/data/maps/
+
+# Regenerated audit plots
+validation/results/audit*.png
+validation/results/audit*.json
+
+# Editor / OS
 .DS_Store
 Thumbs.db
-*~
-*.orig
-@eaDir/
-#recycle/
-.SynologyWorkingDirectory
-desktop.ini
+.idea/
+.vscode/

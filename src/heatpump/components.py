@@ -11,6 +11,19 @@ def soft_pos(x: Array, eps: float = 1.0e4) -> Array:
     return 0.5 * (x + jnp.sqrt(x * x + eps * eps))
 
 
+def polytropic_dh_is(p_s, p_d, rho_s, gamma):
+    """Ideal-gas polytropic estimate of the isentropic enthalpy rise.
+
+    Used by both the JAX residual and the NumPy sizer so design ``h_2``
+    matches ``compressor_mdot_h``. Accepts scalars or arrays.
+    """
+    pr = jnp.clip(p_d / jnp.maximum(p_s, 1.0e4), 1.01, 12.0)
+    g = jnp.clip(gamma, 1.05, 1.8)
+    return (g / (g - 1.0)) * (p_s / jnp.maximum(rho_s, 1.0)) * (
+        pr ** ((g - 1.0) / g) - 1.0
+    )
+
+
 def compressor_mdot_h(
     p_s: Array,
     p_d: Array,
@@ -35,10 +48,7 @@ def compressor_mdot_h(
     N_eff = N_hz * jax_sigmoid((N_hz - 4.0) * 1.5)
     mdot = eta_v * rho_s * V_disp * N_eff
 
-    # Polytropic isentropic enthalpy change: Δh_is = [γ/(γ-1)] (p/ρ) (pr^{(γ-1)/γ}-1)
-    dh_is = (gamma / (gamma - 1.0)) * (p_s / jnp.maximum(rho_s, 1.0)) * (
-        pr ** ((gamma - 1.0) / gamma) - 1.0
-    )
+    dh_is = polytropic_dh_is(p_s, p_d, rho_s, gamma)
     eta_is = jnp.clip(eta_is0, 0.20, 0.95)
     h_d = h_s + dh_is / eta_is
     power = mdot * (h_d - h_s)

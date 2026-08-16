@@ -5,9 +5,9 @@ publishers cited below. The designer is **not** fitted to either set.
 How the unfitted plant is scored: [validation/README.md](../README.md).
 Physics: [docs/model.md](../../docs/model.md).
 
-## Ramírez-León et al. 2019 (primary — refrigerant known)
+## Ramírez et al. 2019 (primary — refrigerant known)
 
-- H. Ramírez-León, J. Jiménez-Cabas, A. Bula, “Experimental data for an
+- Hermes Ramírez, Javier Jiménez-Cabas, Antonio Bula, “Experimental data for an
   air-conditioning system identification,” *Data in Brief* 25 (2019) 104316.
 - DOI: [10.1016/j.dib.2019.104316](https://doi.org/10.1016/j.dib.2019.104316)
 - License: CC BY 4.0
@@ -19,9 +19,9 @@ Physics: [docs/model.md](../../docs/model.md).
 
 ## Ramaraj & Sparn 2024 (system Q/W — refrigerant not named)
 
-- S. Ramaraj and B. Sparn, “BENEFIT with Northeastern University: HVAC
-  Hardware-in-the-Loop Experimental Testing of Heat Pump and Air Conditioner,”
-  NLR Data Catalog (2024).
+- Sugirdhalakshmi Ramaraj and Bethany Sparn, “BENEFIT with Northeastern
+  University: HVAC Hardware-in-the-Loop Experimental Testing of a Heat Pump
+  and Air Conditioner,” NLR Data Catalog (2024).
 - DOI: [10.7799/2440214](https://doi.org/10.7799/2440214)
 - Unit: 3-ton single-speed ASHP, SEER 16, HSPF 9.5, 15 kW aux, NREL SPL
 - Raw 1 Hz CSVs are large and gitignored. Re-download:
@@ -55,7 +55,7 @@ are labelled as such.
 
 ## What was not used
 
-- Yousaf / Bradshaw 2026 IJR 14 kW R410A ASHP tables — supplementary Excel
-  is cited in the paper but was not retrieved as an open file here.
+- Yousaf / Bradshaw 2026 IJR 14 kW R410A ASHP tables — not used and not
+  cited in `paper/main.tex`. The supplementary Excel was not retrieved.
 - Water-source / vapor-injection / high-temperature heat-pump sets (wrong
   cycle architecture for this plant).

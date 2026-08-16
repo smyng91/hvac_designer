@@ -58,7 +58,7 @@ class AHRI540Compressor:
 
     @classmethod
     def from_file(cls, path: str | Path) -> AHRI540Compressor:
-        raw = json.loads(Path(path).read_text())
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
         if "power" not in raw or "mdot" not in raw:
             raise ValueError(f"{path}: AHRI 540 file must contain 'power' and 'mdot' (10 coefficients each)")
         if not str(raw.get("citation", "")).strip():
@@ -73,6 +73,16 @@ class AHRI540Compressor:
             T_unit=str(raw.get("T_unit", raw.get("units", {}).get("T", "C"))),
             N_rated_hz=raw.get("N_rated_hz"),
         )
+
+    @classmethod
+    def from_plant(cls, spec) -> AHRI540Compressor:
+        path = getattr(spec, "ahri540_path", None)
+        if not path:
+            raise TypeError(
+                "AHRI 540 requires a published or user coefficient file "
+                "(PlantSpec.ahri540_path). No default map is invented."
+            )
+        return cls.from_file(path)
 
     def map(
         self,

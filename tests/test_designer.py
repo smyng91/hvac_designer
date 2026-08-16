@@ -12,7 +12,7 @@ from heatpump.requirements import Constraints, DesignRequest
 
 
 def test_typical_r32_passes_gates():
-    rep = design_heat_pump("R32", 5500.0, T_out=273.15, T_zone=293.15)
+    rep = design_heat_pump("R32", 5500.0, T_out=273.15, T_zone=293.15, match_plant=False)
     assert rep.gates is not None and rep.gates.ok
     assert rep.charge_kg > 0.0
     assert rep.G_e > 0.0 and rep.G_c > 0.0
@@ -26,12 +26,13 @@ def test_tight_discharge_is_a_hard_fail():
             5500.0,
             T_out=273.15,
             T_zone=293.15,
+            match_plant=False,
             constraints=Constraints(T_disch_max=330.0),
         )
 
 
 def test_heating_capacity_rises_with_outdoor_t():
-    rep = design_heat_pump("R32", 5500.0, T_out=273.15, T_zone=293.15)
+    rep = design_heat_pump("R32", 5500.0, T_out=273.15, T_zone=293.15, match_plant=False)
     cmap = capacity_map(
         fluid=rep.fluid,
         kind="heating",
@@ -63,6 +64,7 @@ def test_cooling_balance_and_package(tmp_path: Path):
             T_out_cool=308.15,
             T_zone=297.15,
             indoor_RH=0.55,
+            match_plant=False,
         )
     )
     pkg = sys.as_report()

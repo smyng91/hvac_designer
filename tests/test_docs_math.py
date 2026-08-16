@@ -26,4 +26,4 @@ def _leftover_tex(text: str) -> int:
 
 def test_docs_use_github_math_delimiters() -> None:
     for path in _DOCS:
-        assert _leftover_tex(path.read_text()) == 0, path
+        assert _leftover_tex(path.read_text(encoding="utf-8")) == 0, path

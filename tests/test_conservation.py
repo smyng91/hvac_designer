@@ -39,6 +39,22 @@ def test_mass_almost_closed_over_implicit_euler():
     assert abs(m1 - m0) / m0 < 5e-3
 
 
+def test_mass_almost_closed_over_trbdf2():
+    spec = heating_spec("R32", 5500.0, n_e=4, n_c=4)
+    tables = build_tables("R32", n_p=32, n_h=48)
+    y = initial_state(spec, tables)
+    u = jnp.array([40.0, 0.4, 1.0, 1.0, 273.15, -1000.0])
+    rhs = make_rhs(spec, tables)
+    project = lambda z: project_state(z, tables, spec.layout)
+    from heatpump.solver import integrate
+
+    m0 = float(diagnostics(spec, tables, y, u)["charge"])
+    t, Y = integrate(rhs, y, lambda _t: u, t_final=20.0, dt0=0.25, project=project, record_dt=2.0)
+    assert t[-1] >= 19.0
+    m1 = float(diagnostics(spec, tables, jnp.asarray(Y[-1]), u)["charge"])
+    assert abs(m1 - m0) / m0 < 0.02
+
+
 def test_pid_antiwindup_saturates():
     from heatpump.control import PID
 

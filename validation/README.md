@@ -13,7 +13,7 @@ python validation/audit.py
 
 | Path | Contents |
 |---|---|
-| `data/` | Ramírez workbook, optional NREL HIL traces, Lee 2021 map |
+| `data/` | Download the Ramírez workbook and NREL HIL traces here (gitignored); Lee map is in `data/maps/` |
 | `data/SOURCES.md` | Citations, licenses, SHA-256, download commands |
 | `results/` | MAPE tables, on-period means, map evaluation |
 | `run.py` | Ramírez + NREL + Lee → `results/` |

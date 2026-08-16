@@ -1,9 +1,10 @@
 """Heat-exchanger closures used by the sizer and the off-design map.
 
-Refrigerant HTC is Dittus–Boelter (single-phase) or Shah (two-phase).
-Air-side HTC is Zhukauskas cross-flow over a tube bank. Overall UA is
-the series of the two resistances. Heat rate is ε-NTU with C_min on
-the air (two-phase refrigerant has effectively infinite capacity rate).
+Refrigerant HTC is Dittus–Boelter (single-phase) or a Shah-type
+two-phase multiplier. Air-side HTC is Zhukauskas cross-flow over a
+tube bank. Overall UA is the series of the two resistances. Heat rate
+is ε-NTU with C_min on the air (two-phase refrigerant has effectively
+infinite capacity rate).
 """
 
 from __future__ import annotations
@@ -56,7 +57,7 @@ def htc_refrigerant(
     p_r: float,
     evaporating: bool,
 ) -> float:
-    """Dittus–Boelter, or Shah two-phase multiplier when 0 < x < 1."""
+    """Dittus–Boelter, or a Shah-type two-phase multiplier when 0 < x < 1."""
     Re = min(max(abs(G) * D / max(mu, 1e-6), 300.0), 1.0e6)
     Pr = min(max(mu * cp / max(k, 1e-3), 0.4), 8.0)
     n_pr = 0.4 if evaporating else 0.3

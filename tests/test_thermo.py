@@ -68,3 +68,31 @@ def test_tables_other_fluids():
         st = eval_ph(tables, float(tables.p[len(tables.p) // 2]), float(tables.h[len(tables.h) // 2]))
         assert np.isfinite(float(st.T))
         assert float(st.rho) > 0.5
+
+
+def test_eval_ph_reads_each_field_from_its_own_grid():
+    """eval_ph interpolates T, x, and rho independently (not a coupled flash)."""
+    tables = build_tables("R32", n_p=32, n_h=48)
+    i, j = 10, 20
+    p = float(tables.p[i])
+    h = float(tables.h[j])
+    st = eval_ph(tables, p, h)
+    assert abs(float(st.T) - float(tables.T[i, j])) < 1e-8
+    assert abs(float(st.rho) - float(tables.rho[i, j])) < 1e-8
+    assert abs(float(st.x) - float(np.clip(tables.x[i, j], 0.0, 1.0))) < 1e-8
+
+
+def test_eval_ph_dome_quality_tracks_enthalpy():
+    tables = build_tables("R32", n_p=32, n_h=48)
+    p = 813097.0
+    env = sat_from_tables(tables, p)
+    hf, hg = env["hf"], env["hg"]
+    xs = []
+    rhos = []
+    for frac in (0.1, 0.3, 0.5, 0.7, 0.9):
+        st = eval_ph(tables, p, hf + frac * (hg - hf))
+        xs.append(float(st.x))
+        rhos.append(float(st.rho))
+        assert abs(float(st.x) - frac) < 0.12
+    assert xs[-1] > xs[0]
+    assert rhos[0] > rhos[-1]

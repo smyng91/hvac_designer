@@ -134,8 +134,8 @@ class PlantSpec:
 
     Device slots (``compressor``, ``expansion``, ``htc_ref``, ``air_side``,
     ``zone_model``, ``fan_indoor``, ``fan_outdoor``) are optional objects.
-    ``None`` uses the built-in kernel (no registry, no dispatch). Assign a
-    replacement to retrofit: ``replace(spec, compressor=MyMap(...))``.
+    ``None`` uses the built-in kernel. Assign a replacement to retrofit:
+    ``replace(spec, compressor=MyMap(...))``.
     """
 
     fluid: str = "R32"
@@ -336,6 +336,7 @@ def unpack_state(y: Array, lay: Layout) -> dict[str, Array]:
 
 
 def project_state(y: Array, tables: PropertyTables, lay: Layout) -> Array:
+    y = jnp.asarray(y)
     y = y.at[lay.i_pe].set(jnp.clip(y[lay.i_pe], tables.p[0], tables.p[-1]))
     y = y.at[lay.i_pc].set(jnp.clip(y[lay.i_pc], tables.p[0], tables.p[-1]))
     y = y.at[lay.sl_he].set(jnp.clip(y[lay.sl_he], tables.h[0], tables.h[-1]))
