@@ -26,12 +26,13 @@ pip install -e ".[dev]"
 ## Quick start
 
 ```bash
-python examples/heating.py          # R32, 5.5 kW, 0 °C / 20 °C, 1 h
-python examples/run_all.py          # heating, cooling, reverse, weather
+python examples/design.py           # size R32, 5.5 kW, 0 °C / 20 °C
+python examples/heating.py          # same plant, 1 h closed-loop
+python examples/run_all.py
 pytest
 ```
 
-Outputs: `examples/out/`. `--t-final 90` keeps the full DAE.
+Outputs: `output/`. `--t-final 90` keeps the full DAE.
 Tutorial: [docs/quickstart.md](docs/quickstart.md).
 
 ## Scope

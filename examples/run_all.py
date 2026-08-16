@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the four example cases."""
+"""Run the example cases."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 STEPS = (
+    ("design", ["design.py"]),
     ("heating", ["heating.py"]),
     ("cooling", ["cooling.py"]),
     ("reverse", ["reverse.py"]),

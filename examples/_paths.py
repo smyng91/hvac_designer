@@ -10,7 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-OUT = Path(__file__).resolve().parent / "out"
+OUT = ROOT / "output"
 WEATHER_COOL = Path(__file__).resolve().parent / "weather_cooling.csv"
 WEATHER_HEAT = Path(__file__).resolve().parent / "weather_heating.csv"
 WEATHER_REVERSE = Path(__file__).resolve().parent / "weather_reverse.csv"

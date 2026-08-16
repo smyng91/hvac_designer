@@ -535,7 +535,7 @@ def main(argv: list[str] | None = None) -> None:
         help="full DAE, quasi-steady zone (hours/days), or auto (qss if t>1 h)",
     )
     p.add_argument("--list-fluids", action="store_true")
-    p.add_argument("--out", default="examples/out")
+    p.add_argument("--out", default="output")
     p.add_argument("--report", default=None, help="write design package (.md + .json)")
     p.add_argument("--design-only", action="store_true", help="size and write the package, skip the transient")
     p.add_argument("--moist", action="store_true", help="add zone humidity to the DAE (requires --RH-out and --RH-zone)")

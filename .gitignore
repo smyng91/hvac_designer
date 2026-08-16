@@ -26,7 +26,7 @@ validation/data/nrel_hil/*.csv
 
 # JAX / sim artifacts
 .jax_cache/
-examples/out/
+output/
 *.png
 *.npz
 *.npy

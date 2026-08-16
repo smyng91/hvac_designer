@@ -4,25 +4,41 @@ Python 3.14. After [install](../README.md#install):
 
 ```bash
 source .venv/bin/activate
+python examples/design.py           # size only → output/design.md
 python examples/heating.py
 pytest
 ```
 
 `--t-final 90` is the full finite-volume DAE. Default 1 h uses QSS after
-a short warmup. Plots and design files go to `examples/out/`.
+a short warmup. Plots and design files go to `output/`.
 
 ## Cases
 
 | Script | What it does |
 |---|---|
+| `examples/design.py` | Size from conditions (no transient) → `output/design.md` |
 | `examples/heating.py` | R32 heat pump, 5.5 kW, \(0^\circ\mathrm{C}\) / \(20^\circ\mathrm{C}\) |
 | `examples/cooling.py` | R410A AC, 6.2 kW, \(35^\circ\mathrm{C}\) / \(24^\circ\mathrm{C}\) |
 | `examples/reverse.py` | One reversible unit: cool, then heat |
 | `examples/weather.py` | Size and run from a CSV; bins = this record’s dwell |
-| `examples/run_all.py` | Heating, cooling, reverse, weather cooling |
+| `examples/run_all.py` | Design, heating, cooling, reverse, weather cooling |
 
-Weather CSVs are scenarios, not lab traces. Literature comparisons:
+Weather CSVs are scenarios, not lab traces. All example and CLI results
+go to `output/` (gitignored). Literature:
 [`validation/`](../validation/README.md).
+
+## Size a plant
+
+```bash
+python examples/design.py
+python examples/design.py --mode cooling --load 6200 --T-out 35 --T-zone 24
+python examples/design.py --mode heat_pump --load-heat 5500 --load-cool 6200
+python examples/design.py --weather examples/weather_heating.csv
+```
+
+Writes `output/design.md`, `output/design.json`, and `output/design_map.png`.
+No transient. Optional: `--SH`, `--SC`, `--DT-evap`, `--DT-cond`, `--V-zone`,
+`--load-tons`. Default conditions match `heating.py`.
 
 ## Library
 
@@ -36,7 +52,7 @@ req = DesignRequest(
     timeseries=TimeSeries.from_csv("examples/weather_cooling.csv"),
 )
 sys = design_system(req)
-sys.as_report().write("examples/out/design.md")
+sys.as_report().write("output/design.md")
 res = simulate(sys.controller, spec=sys.spec, request=req, t_final=3600.0)
 ```
 
@@ -59,7 +75,7 @@ python -m heatpump.simulate -r R410A --T-zone 24 \
   --weather examples/weather_cooling.csv
 
 python -m heatpump.simulate --design-only --mode heating -r R32 \
-  --load 5500 --T-out 0 --T-zone 20 --report examples/out/design.md
+  --load 5500 --T-out 0 --T-zone 20 --report output/design.md
 
 python -m heatpump.simulate --mode heating -r R32 --load 5500 \
   --T-out 0 --T-zone 20 --t-final 86400 --reduction qss

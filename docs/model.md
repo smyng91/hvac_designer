@@ -6,7 +6,8 @@ one lumped zone. The JAX residual \(\dot y=f(t,y,u)\) is shared by the
 integrator and MPC.
 
 Implementation: `src/heatpump/`. Usage: [quickstart](quickstart.md),
-[README](../README.md). SI throughout (Pa, K, J/kg, kg/s, W, m).
+[examples](../examples/README.md), [README](../README.md). Example and
+CLI results go to `output/`. SI throughout (Pa, K, J/kg, kg/s, W, m).
 
 ## 1. Scope
 
@@ -324,6 +325,7 @@ Off-design: a fixed machine is re-closed on a \(T_\mathrm{out}\) grid
 so \(\dot m\Delta h\) equals ε-NTU \(Q\). Balance point:
 \(Q_\mathrm{cap}(T)-Q_\mathrm{load}(T)=0\). Design-package SHR is
 \(Q_\mathrm{sens}/Q_\mathrm{coil}\), an output.
+`examples/design.py` writes the package to `output/` (no transient).
 
 Gates (raise `DesignGateError`): \(p_c\le f p_\mathrm{crit}\),
 \(T_\mathrm{disch}\le T_\mathrm{disch,max}\), \(\Pi\le\Pi_\mathrm{max}\),
