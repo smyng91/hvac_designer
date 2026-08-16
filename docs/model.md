@@ -1,39 +1,26 @@
 # Transient two-phase vapor-compression plant
 
-This note describes the air-source heat-pump / air-conditioner model in
-this repository: a subcritical vapor-compression cycle with distributed
-two-phase heat exchangers, closed by a scroll compressor and an
-isenthalpic electronic expansion valve (EEV), coupled to a single dry
-zone. The residual is written in JAX so the implicit integrator and
-model-predictive controllers share one plant.
+Subcritical air-source heat pump / air conditioner: distributed
+two-phase coils, clearance or AHRI 540 compressor, isenthalpic EEV,
+one lumped zone. The JAX residual \(\dot y=f(t,y,u)\) is shared by the
+integrator and MPC.
 
-The implementation lives under `src/heatpump/`. Usage, examples, and
-the literature packet are in the [README](../README.md). SI units
-throughout (Pa, K, J/kg, kg/s, W, m).
+Implementation: `src/heatpump/`. Usage: [quickstart](quickstart.md),
+[README](../README.md). SI throughout (Pa, K, J/kg, kg/s, W, m).
 
 ## 1. Scope
 
-The plant is a **single-stage, subcritical, two-phase** machine. Any
-CoolProp HEOS fluid can be named; the sizer rejects duties that would
-require transcritical condensation (typical room heating with CO2).
+Single-stage, subcritical, two-phase. Any CoolProp HEOS fluid; duties
+that would require transcritical condensation are rejected.
 
-Included:
+Included: 1-D finite-volume evaporator and condenser; clearance or
+cited AHRI 540 compressor; isenthalpic EEV; indoor/outdoor remap;
+lumped zone; optional humidity and frost; load-based sizing; PID,
+hysteresis, bang-bang, LMPC, NMPC.
 
-- evaporator and condenser as 1-D finite-volume channels
-- scroll / recip compressor with clearance volumetric efficiency
-- isenthalpic EEV
-- indoor / outdoor coil remap for heating vs cooling
-- lumped zone air capacitance
-- optional zone humidity and outdoor-coil frost (off by default)
-- load-based hardware sizing
-- zone + superheat controllers (PID cascade, hysteresis, bang-bang, linear and nonlinear MPC)
-
-Not included:
-
-- automatic / time-based defrost or empirical frost derate tables
-- ducts, fans as dynamic states, or multi-zone buildings
-- transcritical gas coolers, flash tanks, or economizers
-- oil, charge migration into inactive volumes, or piping inertia
+Not included: automatic defrost or frost derate tables; ducts or
+multi-zone; transcritical CO2, flash tanks, economizers; oil or
+piping inertia.
 
 ## 2. Architecture
 
@@ -44,512 +31,436 @@ Not included:
                    cond (cool)                          evap (cool)
 ```
 
-Modules:
-
 | Module | Role |
 |---|---|
-| `thermo` | CoolProp flashes → JAX \((p,h)\) tables |
-| `psychro` | humid-air tables (CoolProp HA); design-package SHR |
-| `components` | numerical kernels (clearance map, orifice, Shah, air march) |
-| `devices` | optional replacements: compressor, EEV, HTC, air-side, zone, fan, frost |
-| `plant` | finite-volume DAE residual \( \dot y = f(t,y,u) \) |
-| `solver` | TR-BDF2 + implicit-Euler fallback; QSS for hours/days |
-| `design` | CoolProp design cycle and hardware sizing |
-| `capacity` | off-design \(Q(T_\mathrm{out})\) of a fixed machine |
-| `requirements` | `DesignRequest`, constraints, timeseries |
+| `thermo` | CoolProp flashes \(\to\) JAX \((p,h)\) tables |
+| `psychro` | humid-air tables; design-package SHR |
+| `components` | clearance map, orifice, Shah, air march |
+| `devices` | optional compressor, EEV, HTC, air, zone, fan, frost |
+| `plant` | residual \(\dot y=f(t,y,u)\) |
+| `solver` | TR-BDF2; QSS for hours/days |
+| `design` | cycle close and hardware sizing |
+| `capacity` | off-design \(Q(T_\mathrm{out})\) |
 | `control` | zone / superheat laws and MPC |
-| `catalog` | user/cited equipment list (no invented SKUs) |
-| `seasonal` | bins from the record’s dwell, not AHRI hour tables |
 | `simulate` | closed-loop integration and CLI |
-| `validation` | Ramírez / NREL / Lee comparisons |
 
-The residual calls the kernels in `components` when a `PlantSpec` slot
-is empty. A user retrofits a component by assigning an object
-(`replace(spec, compressor=MyMap(...))`). There is no name registry.
-Built-in replacements live under `devices/` (clearance compressor,
-orifice EEV, Shah/Dittus HTC, series-UA air, lumped zone, AHRI 540,
-table fan). Coils stay `CoilSpec` objects (indoor / outdoor).
+Empty `PlantSpec` slots call `components`. Retrofit by assignment
+(`replace(spec, compressor=MyMap(...))`). CoolProp is not called from
+the JIT residual.
 
-CoolProp is **not** called from the JIT residual. At setup the fluid is
-flashed onto a dense \((p,h)\) grid; the residual only interpolates.
+## 3. State and inputs
 
-## 3. Refrigerant properties
-
-### 3.1 CoolProp flashes
-
-`resolve_fluid` maps common HVAC names (`R-32`, `410a`, `propane`, …)
-onto CoolProp HEOS identifiers. Saturation envelopes use \( (p,q) \)
-inputs. Single-phase states use \( (h,p) \). Transport properties that
-fail near the critical point fall back to saturated-liquid or
-saturated-vapor values.
-
-### 3.2 Two-phase density (Zivi)
-
-Homogeneous density under-predicts slip in evaporators. Two-phase
-density uses Zivi’s void fraction
+Each coil has one pressure (acoustic equilibrium) and a distributed
+enthalpy / wall field.
 
 \[
-\alpha = \left[ 1 + \frac{1-x}{x} \left(\frac{\rho_g}{\rho_f}\right)^{2/3} \right]^{-1},
-\qquad
-\rho = \alpha\,\rho_g + (1-\alpha)\,\rho_f.
+y=\bigl[p_e,\; h_e^{(1:n_e)},\; T_{w,e}^{(1:n_e)},\;
+        p_c,\; h_c^{(1:n_c)},\; T_{w,c}^{(1:n_c)},\; T_z,\;
+        W_z^{(\mathrm{opt})},\; m_\mathrm{fr}^{(\mathrm{opt})}\bigr].
 \]
 
-Quality is \( x = (h - h_f)/(h_g - h_f) \) inside the dome.
-
-### 3.3 JAX tables
-
-`build_tables(fluid)` builds a log-spaced pressure grid from just above
-the fluid’s usable saturation floor to \( 0.92\,p_c \), and a linear
-enthalpy grid from \( h_f^\mathrm{min} - 80\,\mathrm{kJ/kg} \) to
-\( h_g^\mathrm{max} + 200\,\mathrm{kJ/kg} \). Each node stores
-\( T, \rho, x, \mu, k, c_p \). One-dimensional saturation columns store
-\( T_\mathrm{bubble}(p) \), \( T_\mathrm{dew}(p) \), \( h_f \), \( h_g \),
-\( \rho_f \), \( \rho_g \).
-
-`eval_ph` bilinearly interpolates the 2-D fields. Density derivatives
-\( (\partial\rho/\partial p)_h \) and \( (\partial\rho/\partial h)_p \)
-are the analytic slopes of that interpolant — they are **not** stored
-as separate tables. Superheat uses dew temperature; subcooling uses
-bubble temperature (zeotropic glide is therefore consistent).
-
-The residual must stay finite under `jacfwd`. Quality used in the HTC
-is clipped away from \( 0 \) and \( 1 \); pressures and enthalpies are
-projected onto the table box after every Newton update.
-
-## 4. Plant DAE
-
-### 4.1 State and inputs
-
-Each coil has a **single pressure** (acoustic equilibrium) and a
-distributed enthalpy / wall-temperature field. The state is
+Default mesh \(n_e=n_c=6\) (31 states, dry). \(W_z\) and \(m_\mathrm{fr}\)
+are appended only with user `moist` / `frost` and user RH.
 
 \[
-y = \bigl[ p_e,\; h_e^{(1:n_e)},\; T_{w,e}^{(1:n_e)},\;
-           p_c,\; h_c^{(1:n_c)},\; T_{w,c}^{(1:n_c)},\; T_z,\;
-           W_z^\mathrm{(opt)},\; m_\mathrm{fr}^\mathrm{(opt)} \bigr].
+u=\bigl[N,\; u_\mathrm{eev},\; \phi_i,\; \phi_o,\; T_\mathrm{out},\; Q_\mathrm{gain}\bigr]
 \]
 
-Default mesh is \( n_e = n_c = 6 \) (31 states, dry). Humidity and frost
-mass are appended only when the user sets `moist` / `frost` and supplies
-`RH_out` and `RH_zone0` — those humidities are never defaulted. Inputs are
+optional extras \(\bigl[W_\mathrm{gain},\; \mathrm{defrost},\; \mathrm{RH}_\mathrm{out}\bigr]\).
+Omitted \(W_\mathrm{gain}\) is zero, not invented infiltration.
+
+| Symbol | Unit | Meaning |
+|---|---|---|
+| \(p_e,p_c\) | Pa | evaporator / condenser pressure |
+| \(h_e^{(i)},h_c^{(i)}\) | J/kg | cell enthalpy |
+| \(T_{w,e}^{(i)},T_{w,c}^{(i)}\) | K | cell wall temperature |
+| \(T_z\) | K | zone dry-bulb |
+| \(W_z\) | kg/kg | zone humidity ratio (moist) |
+| \(m_\mathrm{fr}\) | kg | outdoor frost mass (frost) |
+| \(N\) | Hz | compressor electrical frequency |
+| \(u_\mathrm{eev}\) | — | EEV opening in \([0,1]\) |
+| \(\phi_i,\phi_o\) | — | indoor / outdoor fan fraction |
+| \(T_\mathrm{out}\) | K | outdoor dry-bulb |
+| \(Q_\mathrm{gain}\) | W | exogenous heat **into** the zone |
+| \(W_\mathrm{gain}\) | kg/s | exogenous vapor into the zone |
+| \(\mathrm{defrost}\) | — | melt flag; melt only if \(W_\mathrm{defrost}>0\) |
+| \(\mathrm{RH}_\mathrm{out}\) | — | outdoor relative humidity \(0\)–\(1\) |
+
+## 4. Refrigerant properties
+
+`resolve_fluid` maps HVAC names onto CoolProp HEOS ids. Saturation:
+\((p,q)\). Single-phase: \((h,p)\).
+
+Quality inside the dome and Zivi void fraction:
 
 \[
-u = \bigl[ N,\; u_\mathrm{eev},\; \phi_i,\; \phi_o,\; T_\mathrm{out},\; Q_\mathrm{gain} \bigr]
+x=\frac{h-h_f}{h_g-h_f},\qquad
+\alpha=\left[1+\frac{1-x}{x}\left(\frac{\rho_g}{\rho_f}\right)^{2/3}\right]^{-1},\qquad
+\rho=\alpha\rho_g+(1-\alpha)\rho_f.
 \]
 
-with optional extras \([W_\mathrm{gain},\; \mathrm{defrost},\; \mathrm{RH}_\mathrm{out}]\).
-Compressor speed \( N \) is in Hz, EEV opening in \( [0,1] \), indoor
-/ outdoor fan fractions, outdoor dry-bulb, and heat **into** the zone
-(W) on top of the envelope term. \( W_\mathrm{gain} \) is user moisture
-into the zone (kg/s); omitted means zero, not invented infiltration.
+`build_tables` uses a log-\(p\) grid to \(0.92\,p_c\) and a linear \(h\)
+grid. Each node stores \(T,\rho,x,\mu,k,c_p\). Saturation columns:
+\(T_\mathrm{bub}(p)\), \(T_\mathrm{dew}(p)\), \(h_f,h_g,\rho_f,\rho_g\).
+`eval_ph` bilinearly interpolates; \((\partial\rho/\partial p)_h\) and
+\((\partial\rho/\partial h)_p\) are the interpolant slopes. Superheat
+uses dew \(T\); subcooling uses bubble \(T\).
 
-### 4.2 Finite-volume heat exchanger
+## 5. Plant DAE
 
-This is a method-of-lines HVAC model in the family of Bendapudi,
-Rasmussen, and Qiao: one pressure per coil, upwind enthalpy cells, and
-a linear internal mass-flow profile between the known port flows.
+### 5.1 Finite-volume coils
 
-Mass and energy in integral form are
+Method of lines (Bendapudi / Rasmussen / Qiao): one pressure per coil,
+upwind enthalpy, linear internal mass-flow profile.
 
 \[
-\frac{\partial\rho}{\partial t} + \frac{\partial(\rho v)}{\partial z} = 0,
-\qquad
-\frac{\partial(\rho h)}{\partial t} + \frac{\partial(\rho v h)}{\partial z}
-  = \frac{\partial p}{\partial t} + \frac{P}{A} q''.
+\frac{\partial\rho}{\partial t}+\frac{\partial(\rho v)}{\partial z}=0,\qquad
+\frac{\partial(\rho h)}{\partial t}+\frac{\partial(\rho v h)}{\partial z}
+=\frac{\partial p}{\partial t}+\frac{P}{A}q''.
 \]
 
-Per cell, with well-mixed energy and upwind inlet enthalpy \( h^\mathrm{up} \),
+Per cell, well-mixed energy, upwind inlet \(h^\mathrm{up}\):
 
 \[
-\rho V \frac{\mathrm{d}h}{\mathrm{d}t}
-  = \dot m_\mathrm{in}(h^\mathrm{up} - h) + Q + V \frac{\mathrm{d}p}{\mathrm{d}t}.
+\rho V\frac{\mathrm{d}h}{\mathrm{d}t}
+=\dot m_\mathrm{in}(h^\mathrm{up}-h)+Q+V\frac{\mathrm{d}p}{\mathrm{d}t}.
 \]
-
-Interface mass flow is the linear blend
 
 \[
-\dot m(z) = \dot m_\mathrm{in}\,(1-\xi) + \dot m_\mathrm{out}\,\xi,
-\qquad \xi \in [0,1].
+\dot m(z)=\dot m_\mathrm{in}(1-\xi)+\dot m_\mathrm{out}\,\xi,\qquad \xi\in[0,1].
 \]
 
-Evaporator ports: inlet = EEV, outlet = compressor suction.
-Condenser ports: inlet = compressor discharge, outlet = EEV.
-
-Overall mass closes the pressure ODE. Inventory includes the header
-volume \( V_h \) at the mean cell density:
+Evaporator ports: EEV \(\to\) suction. Condenser ports: discharge \(\to\) EEV.
+Inventory includes header volume \(V_h\) at mean cell density:
 
 \[
-M = \sum_i \rho_i V_i + V_h \langle\rho\rangle,
-\qquad
-\mathrm{d}\rho = \Bigl(\frac{\partial\rho}{\partial p}\Bigr)_h \mathrm{d}p
-               + \Bigl(\frac{\partial\rho}{\partial h}\Bigr)_p \mathrm{d}h.
+M=\sum_i\rho_i V_i+V_h\langle\rho\rangle,\qquad
+\mathrm{d}\rho=\Bigl(\frac{\partial\rho}{\partial p}\Bigr)_h\mathrm{d}p
++\Bigl(\frac{\partial\rho}{\partial h}\Bigr)_p\mathrm{d}h.
 \]
 
-Omitting \( (\partial\rho/\partial h)_p \) on the header (or the cells)
-produces a secular charge drift. Both terms are kept.
+Both density derivatives are kept (omitting the \(h\) term drifts charge).
+A moving-boundary coil is not used.
 
-A **moving-boundary** coil (explicit SH / two-phase / SC zones) is not
-used. Finite volume lets the same residual handle startup, flooding,
-and dry-out without switching index sets, which matters for Newton and
-`jacfwd`. Superheat, two-phase, and subcooling still appear as the
-enthalpy profile along the mesh.
-
-### 4.3 Compressor
-
-Semi-empirical scroll / recip map. Pressure ratio
-\( \Pi = p_d / p_s \). Volumetric efficiency is the clearance form
+Internal volumes:
 
 \[
-\eta_v = 1 - C\bigl(\Pi^{1/\gamma} - 1\bigr).
+V=n_\mathrm{tubes}\,\tfrac{\pi}{4}D^2 L,\qquad
+A_r=n_\mathrm{tubes}\,\pi D L,\qquad
+A_a=A_r\cdot\mathrm{fin}.
 \]
 
-Mass flow is \( \dot m = \eta_v\,\rho_s\,V_\mathrm{disp}\,N_\mathrm{eff} \),
-with a smooth cutoff \( N_\mathrm{eff} = N\,\sigma(1.5(N-4)) \) so the
-machine is off near 0 Hz. Discharge enthalpy uses a polytropic
-isentropic rise (no entropy inversion inside the residual)
+### 5.2 Compressor
+
+Clearance volumetric efficiency and polytropic isentropic rise
+(\(\Pi=p_d/p_s\)):
 
 \[
-\Delta h_\mathrm{is}
-  = \frac{\gamma}{\gamma-1}\frac{p_s}{\rho_s}\bigl(\Pi^{(\gamma-1)/\gamma}-1\bigr),
-\qquad
-h_d = h_s + \Delta h_\mathrm{is}/\eta_\mathrm{is},
+\eta_v=1-C\bigl(\Pi^{1/\gamma}-1\bigr),\qquad
+\dot m=\eta_v\,\rho_s\,V_\mathrm{disp}\,N_\mathrm{eff},
 \]
-
-and shaft power \( W = \dot m\,(h_d - h_s) \). \( \gamma \) is taken
-from the CoolProp suction state at design and held constant in the
-transient. \( \eta_\mathrm{is} \) is the user-supplied isentropic
-efficiency (constant).
-
-An AHRI 540 10-coefficient map may replace the clearance device when
-the user supplies a cited coefficient file (`PlantSpec.ahri540_path`).
-No default polynomial is invented. The published Lee et al. (2021)
-Table 5 map is shipped under `data/maps/` for that purpose. Discharge
-enthalpy is hermetic, \( h_d = h_s + W/\dot m \). Fixed-speed maps omit
-`N_rated`; \( N \) still gates the machine off near 0 Hz. Fan airflow
-is \( \dot m_0\phi \) unless the user loads a `(speed, \dot m)` table.
-
-### 4.4 Expansion valve
-
-Isenthalpic orifice, \( h_\mathrm{eev} = h_{c,\mathrm{out}} \):
 
 \[
-\dot m = C_d\,A_\mathrm{max}\,u\sqrt{2\rho\,\Delta p_+}.
+N_\mathrm{eff}=N\,\sigma\bigl(1.5(N-4)\bigr),
 \]
-
-\( A = A_\mathrm{max}\,u \) is the geometric opening. \( \Delta p_+ \)
-is a \( C^1 \) soft-plus so the Jacobian exists at zero pressure
-difference.
-
-### 4.5 Heat transfer
-
-Refrigerant-side HTC is Dittus–Boelter when quality is 0 or 1,
 
 \[
-\mathrm{Nu} = 0.023\,\mathrm{Re}^{0.8}\,\mathrm{Pr}^{n},
-\qquad n = 0.4\ \text{(evap)},\ 0.3\ \text{(cond)},
+\Delta h_\mathrm{is}=\frac{\gamma}{\gamma-1}\frac{p_s}{\rho_s}\bigl(\Pi^{(\gamma-1)/\gamma}-1\bigr),\qquad
+h_d=h_s+\Delta h_\mathrm{is}/\eta_\mathrm{is},\qquad
+W=\dot m(h_d-h_s).
 \]
 
-and the Shah two-phase multiplier \( F(x,p_r) \) inside the dome.
+\(\gamma\) is taken at the design suction state and held. \(\eta_\mathrm{is}\)
+is constant. \(C\) is clearance.
 
-Air is quasi-steady. The wall is eliminated from the energy close
-(series UA) so the DAE is integrable on hour-scale steps:
+AHRI 540 (only if a cited file is supplied), \(T_s,T_d\) dew points in °C:
 
 \[
-\frac{1}{UA} = \frac{1}{h_r A_r} + \frac{1}{h_a A_a}.
+X=C_1+C_2 T_s+C_3 T_d+C_4 T_s^2+C_5 T_s T_d+C_6 T_d^2
++C_7 T_s^3+C_8 T_s^2 T_d+C_9 T_s T_d^2+C_{10} T_d^3.
 \]
 
-Air is marched with that \( UA \) against the refrigerant temperature.
-Heat to the refrigerant is this equilibrium \( Q \); wall temperature
-is slaved, \( \dot T_w = (T_w^\mathrm{ss}-T_w)/\tau \) with
-\( \tau \ge 2\,\mathrm{s} \). That floor is a model reduction, not a
-capacity derate. Fan fraction scales both \( h_a \) and \( \dot m_a \).
-Design \( h_a \) is Zhukauskas cross-flow over a tube bank.
+\(X\) is power (W) or mass flow. Hermetic close: \(h_d=h_s+W/\dot m\).
+Lee 2021 Table 5 is in `data/maps/`. No default polynomial.
 
-### 4.6 Zone
+### 5.3 Expansion valve
 
-One capacitance (dry by default):
+Isenthalpic, \(h_\mathrm{eev}=h_{c,\mathrm{out}}\):
 
 \[
-C_z \dot T_z = Q_\mathrm{zone} + Q_\mathrm{gain} + UA\,(T_\mathrm{out} - T_z).
+\dot m=C_d A_\mathrm{max}u\sqrt{2\rho\,\Delta p_+}.
 \]
 
-With `moist=True` the zone also stores humidity ratio. Leaving coil
-humidity is saturation at refrigerant temperature when that temperature
-is below the local dew point (CoolProp HA tables, interpolated in the
-residual). Latent heat is \( \dot m_a (W_\mathrm{in}-W_\mathrm{out}) h_{fg} \).
-Zone moisture is
+\(\Delta p_+\) is a \(C^1\) soft-plus so the Jacobian exists at \(\Delta p=0\).
+
+### 5.4 Heat transfer
+
+Single-phase Dittus–Boelter; two-phase Shah multiplier \(F(x,p_r)\):
 
 \[
-\rho V\,\dot W_z = \dot m_{a,i}(W_\mathrm{coil,out}-W_z) + W_\mathrm{gain}.
+\mathrm{Nu}=0.023\,\mathrm{Re}^{0.8}\,\mathrm{Pr}^{n},\qquad
+n=0.4\ \text{(evap)},\ 0.3\ \text{(cond)}.
 \]
 
-Frost (`frost=True`, requires moist and user `RH_out`) grows on the
-outdoor coil when \( T_w < 273.15\,\mathrm{K} \):
+Air is quasi-steady. Series UA:
 
 \[
-\dot m_\mathrm{fr} = \dot m_{a,o}\,\max(W_\mathrm{amb}-W_\mathrm{sat}(T_w),0).
+\frac{1}{UA}=\frac{1}{h_r A_r}+\frac{1}{h_a A_a}.
 \]
 
-Layer thickness is \( \delta = m_\mathrm{fr}/(\rho A) \) with Hayashi
-(1977) density and Yonko–Sepsy (1967) conductivity (or IAPWS ice if
-requested). The extra resistance sits in series with the air-side HTC.
-Defrost melts only when the user sets the defrost flag **and**
-`W_defrost > 0`; there is no 45-minute timer and no capacity derate
-table.
+Heat to the refrigerant is this equilibrium \(Q\). Wall is slaved,
+\(\dot T_w=(T_w^\mathrm{ss}-T_w)/\tau\) with \(\tau\ge 2\,\mathrm{s}\)
+(integrability floor, not a capacity derate). Fan fraction scales
+\(h_a\) and \(\dot m_a\). Design \(h_a\): Zhukauskas tube-bank.
 
-Sign convention: \( Q_\mathrm{air} \) is heat from air to the coil wall.
-
-- Heating: indoor coil is the condenser, \( Q_\mathrm{zone} = -\sum Q_{\mathrm{air},c} \) (positive when the coil heats the room).
-- Cooling: indoor coil is the evaporator, \( Q_\mathrm{zone} = -\sum (Q_{\mathrm{air},e}+Q_{\mathrm{lat},e}) \) (negative when the coil cools the room). Dry plants have \( Q_{\mathrm{lat}}=0 \).
-
-`diagnostics()` reports the same \( Q_\mathrm{zone} \), plus indoor latent \( Q_\mathrm{lat} \) and outdoor frost thickness \( \delta_\mathrm{fr} \) when those flags are on.
-
-COP uses useful capacity: \( Q_\mathrm{zone} \) in heating,
-\( |Q_\mathrm{zone}| \) in cooling, divided by compressor power.
-
-### 4.7 Operating mode
-
-Indoor and outdoor geometry are stored as `CoilSpec` objects. Heating
-maps outdoor → evaporator, indoor → condenser. Cooling swaps them.
-`apply_operating_mode` copies the active pair onto the `*_e` / `*_c`
-fields the residual reads. Mid-run reverse swaps those fields and
-remaps the state (indoor/outdoor coils keep their inventory). A
-timeseries `mode` column (1=heating, 0=cooling) schedules the valve;
-on a reversible unit without that column the load sign is used, with
-a deadband and a minimum dwell. The controller flips sign and clears
-windup at each change.
-
-## 5. Design
-
-`design_cycle` builds a subcritical four-point cycle from CoolProp:
-
-1. suction at dew + superheat
-2. discharge at \( h_1 + (h_{2s}-h_1)/\eta_\mathrm{is} \)
-3. liquid at bubble − subcool
-4. EEV outlet at \( h_3 \), \( p_e \)
-
-Heating: evaporator air is outdoor, condenser air is the zone.
-Cooling: the opposite. Evaporating / condensing temperatures are
-offset from those air temperatures by the design approaches
-`DT_evap` / `DT_cond` (defaults 10 K / 12 K). Condensing above
-\( p_\mathrm{crit} \) is rejected (subcritical plant).
-
-Mass flow follows the useful duty (condenser heat in heating,
-evaporator heat in cooling). Displacement is
+Sign: \(Q_\mathrm{air}\) is heat from air to the wall.
 
 \[
-V_\mathrm{disp} = \frac{\dot m}{\eta_v\,\rho_1\,N_\mathrm{design}},
-\qquad
-\eta_v = 1 - C\bigl(\Pi^{1/\gamma}-1\bigr).
+Q_\mathrm{zone}=\begin{cases}
+-\sum Q_{\mathrm{air},c} & \text{heating (indoor = cond)}\\
+-\sum(Q_{\mathrm{air},e}+Q_{\mathrm{lat},e}) & \text{cooling (indoor = evap)}
+\end{cases}
 \]
 
-EEV area inverts the orifice law at the design opening
-\( u = 0.40 \). Tube count is iterated until the ε-NTU heat rate
-equals the cycle duty, with refrigerant HTC from Dittus–Boelter /
-Shah at the design mass flux and air-side HTC from Zhukauskas.
-Air mass flow is closed from \( Q = \varepsilon\,\dot m_a c_p\,\Delta T \).
-Wall capacitance is \( \rho_\mathrm{cu} c_{p,\mathrm{cu}} A t_w \).
-Charge is the Zivi / flashed density on the design enthalpy profile
-times internal volume.
+Dry plants have \(Q_\mathrm{lat}=0\). COP is useful capacity over shaft
+power: \(Q_\mathrm{zone}/W\) in heating, \(|Q_\mathrm{zone}|/W\) in cooling.
+`diagnostics()` reports the same \(Q_\mathrm{zone}\), plus \(Q_\mathrm{lat}\)
+and \(\delta_\mathrm{fr}\) when those flags are on.
 
-Envelope \( UA = Q_\mathrm{load}/|T_z-T_\mathrm{out}| \). Zone
-capacitance is \( \rho_\mathrm{air} c_p V \) (pass `V_zone` or
-`C_zone`; default volume 50 m³).
+### 5.5 Zone
 
-A reversible unit (`mode=heat_pump`) sizes both duties and takes the
-harder compressor, EEV, and coil of the two.
+Dry-air capacitance at the design setpoint (default \(V=50\,\mathrm{m}^3\)):
 
-### 5.1 Sizing from a timeseries
+\[
+C_z=\rho_\mathrm{air}c_p V,\qquad
+C_z\dot T_z=Q_\mathrm{zone}+Q_\mathrm{gain}+UA(T_\mathrm{out}-T_z).
+\]
 
-If `DesignRequest` has a `TimeSeries` and no nameplate, design duty is
-the peak \( |Q_\mathrm{gain}| \) that must be cancelled to hold the
-setpoint:
+At \(20^\circ\mathrm{C}\), \(C_z\approx 60.6\,\mathrm{kJ/K}\); at
+\(24^\circ\mathrm{C}\), \(\approx 59.8\,\mathrm{kJ/K}\). Pass `V_zone`
+or `C_zone` to change it. Furniture and walls are not included.
 
-- cooling capacity \( \max(Q_\mathrm{gain}, 0) \)
-- heating capacity \( \max(-Q_\mathrm{gain}, 0) \)
+When the weather CSV is the complete load, \(UA=0\) so the record is
+not double-counted.
 
-Outdoor design temperature is the ambient **at that peak hour**, not
-the extreme of the whole record. When the profile is the complete
-load, envelope \( UA \) is set to zero so the CSV is not double
-counted. `mode=auto` becomes heating, cooling, or heat_pump from the
-signs of those peaks.
+### 5.6 Humidity and frost (off by default)
 
-CSV columns (case-insensitive): time, outdoor temperature, load;
-optional setpoint. `Q_kW` is taken as kilowatts. `load_kind` is
-`gain` (default, positive heats the zone), `cooling_load`, or
-`heating_load`.
+Require user `RH_out` and, if moist, `RH_zone0`. Leaving-coil humidity
+is saturation at refrigerant \(T\) when that \(T\) is below the local
+dew point.
 
-### 5.2 Feasibility gates
+\[
+Q_\mathrm{lat}=\dot m_a(W_\mathrm{in}-W_\mathrm{out})h_{fg},\qquad
+\rho V\,\dot W_z=\dot m_{a,i}(W_\mathrm{coil,out}-W_z)+W_\mathrm{gain}.
+\]
 
-After the cycle and geometry are closed, `evaluate_gates` checks a
-hard envelope. Failure raises `DesignGateError`:
+Frost (requires moist) on the outdoor coil when \(T_w<273.15\,\mathrm{K}\):
 
-- \( p_c \le f\,p_\mathrm{crit} \) (user material limit; default \( f = 0.90 \))
-- \( T_\mathrm{disch} \le T_\mathrm{disch,max} \) (default 115 °C)
-- pressure ratio \( \le \Pi_\mathrm{max} \) (default 7.5)
-- superheat in \( [4,10] \) K, subcooling \( \ge 0 \)
-- optional mass-flux cap if `Constraints.G_max` is set
+\[
+\dot m_\mathrm{fr}=\dot m_{a,o}\max(W_\mathrm{amb}-W_\mathrm{sat}(T_w),0),\qquad
+\delta=\frac{m_\mathrm{fr}}{\rho_\mathrm{fr}A}.
+\]
 
-These are user envelope limits, not substitutes for the EOS.
+Hayashi (1977) density and Yonko–Sepsy (1967) conductivity
+(\(T_s\) in °C, \(\rho\) in kg/m³):
 
-### 5.3 Capacity versus outdoor temperature
+\[
+\rho_\mathrm{fr}=650\exp(0.277\,T_s),\qquad
+k_\mathrm{fr}=0.001202\,\rho_\mathrm{fr}^{0.963}.
+\]
 
-A *fixed* machine (sized \( V_\mathrm{disp} \) and coil geometry) is
-re-closed on a \( T_\mathrm{out} \) grid: \( T_e \) and \( T_c \) are
-solved so refrigerant \( \dot m\,\Delta h \) equals the ε-NTU coil
-heat rate. Mass flow follows the clearance map. Useful capacity is
-condenser heat in heating and evaporator heat in cooling.
+Closure `ice` uses IAPWS ice Ih at \(0^\circ\mathrm{C}\)
+(\(\rho=916.7\,\mathrm{kg/m}^3\), \(k=2.22\,\mathrm{W/m\cdot K}\)).
+Extra resistance \(r=\delta/k\) sits in series with \(h_a\). Melt only
+if the defrost flag is set **and** \(W_\mathrm{defrost}>0\).
 
-The load line is Newton cooling \( UA\,|T_z - T_\mathrm{out}| \), or
-the timeseries \( Q \) interpolated on outdoor temperature. The
-**balance point** is the zero of \( Q_\mathrm{cap}(T) - Q_\mathrm{load}(T) \).
-Design margin is \( Q_\mathrm{cap}/Q_\mathrm{load} \) at the design
-outdoor temperature.
+### 5.7 Operating mode
 
-### 5.4 Cooling psychrometrics
+Heating: outdoor \(\to\) evap, indoor \(\to\) cond. Cooling swaps.
+`apply_operating_mode` copies the active pair onto `*_e` / `*_c`.
+Mid-run reverse remaps state (coils keep inventory). Timeseries `mode`
+(\(1\)=heat, \(0\)=cool) schedules the valve; without it, load sign
+plus deadband and minimum dwell. The controller flips sign and clears
+windup.
 
-The transient plant is dry unless `moist=True` with user RH. The design
-package computes indoor wet-bulb and dew point from CoolProp humid air.
-The coil is wet when \( T_e \) is below the indoor dew point; leaving
-humidity is then saturation at \( T_e \). Latent heat is
-\( \dot m_a (W_\mathrm{in}-W_\mathrm{out}) h_{fg}(T) \) with water
-\( h_{fg} \) from CoolProp. SHR is \( Q_\mathrm{sens}/Q_\mathrm{coil} \),
-an output, not an input.
+## 6. Design
 
-### 5.5 Design package
+Four-point CoolProp cycle: (1) dew + SH, (2)
+\(h_1+(h_{2s}-h_1)/\eta_\mathrm{is}\), (3) bubble − SC, (4) \(h_3\) at
+\(p_e\).
 
-`SystemDesign.as_report()` writes markdown + JSON: gates, hardware,
-charge from the enthalpy profile, shaft current \( I = W/V \)
-(or \( W/(V\sqrt{3}) \)), capacity tables with closed \( T_e,T_c \),
-and psychrometrics. Motor efficiency is applied only when supplied.
+\[
+T_e=T_{\mathrm{air},e}-\Delta T_\mathrm{evap},\qquad
+T_c=T_{\mathrm{air},c}+\Delta T_\mathrm{cond}.
+\]
 
-## 6. Controllers
+Defaults \(\Delta T_\mathrm{evap}=10\,\mathrm{K}\),
+\(\Delta T_\mathrm{cond}=12\,\mathrm{K}\). Condensing above \(p_c\) is
+rejected. Useful duty sets \(\dot m\) (condenser heat in heating,
+evaporator heat in cooling).
 
-All laws share the same plant measurements (zone temperature,
-superheat, …). The inner loop is a superheat EEV: low SH closes the
-valve; a compressor-speed feedforward plus a slow PID trim set the
-opening, rate-limited so inventory can move.
+\[
+V_\mathrm{disp}=\frac{\dot m}{\eta_v\rho_1 N_\mathrm{design}},\qquad
+u_\mathrm{design}=0.40.
+\]
 
-**PID cascade.** Load feedforward from \( UA \), \( T_\mathrm{out} \),
-and \( Q_\mathrm{gain} \) sets a compressor speed; ISA PID is a trim
-around that (gains scale with \( N_\mathrm{max}/70 \), signs flip in
-cooling). Integral \( \mathrm{d}t \) is clamped so a QSS zero-order
-hold does not wind up. Anti-windup is back-calculation. Speed is
-rate-limited. On reverse, `set_mode` flips signs and clears windup.
+Tube count is iterated until ε-NTU \(Q\) equals cycle duty. Air flow
+from \(Q=\varepsilon\dot m_a c_p\Delta T\). Wall capacitance
+\(\rho_\mathrm{cu}c_{p,\mathrm{cu}}A t_w\). Charge is Zivi / flashed
+density on the design profile times internal volume.
 
-**Hysteresis.** On/off compressor with deadband and minimum on/off
-times (mode-aware: heat when cold, cool when hot).
+From a timeseries with no nameplate:
 
-**Bang-bang.** Deadband without cycle timers (chatters on a fast
-plant; included as a baseline).
+\[
+Q_\mathrm{cool}=\max(Q_\mathrm{gain},0),\qquad
+Q_\mathrm{heat}=\max(-Q_\mathrm{gain},0).
+\]
 
-**Linear MPC.** Affine model \( y_{k+1} = A y_k + B u_k + c \) from
-`jacfwd` of the residual, discretized with implicit Euler to match the
-plant solver. Decision variables are \( (N, u_\mathrm{eev}) \). The QP
-is dense least-squares on the stacked inputs, then projected onto box
-constraints.
+Design outdoor \(T\) is the ambient **at that peak**, not the record
+extreme. `mode=auto` becomes heating, cooling, or heat_pump from those
+peaks. A reversible unit takes the harder compressor, EEV, and coils.
 
-**Nonlinear MPC.** Shooting: implicit-Euler rollout of the full
-residual, projected gradient on the input sequence.
+Off-design: a fixed machine is re-closed on a \(T_\mathrm{out}\) grid
+so \(\dot m\Delta h\) equals ε-NTU \(Q\). Balance point:
+\(Q_\mathrm{cap}(T)-Q_\mathrm{load}(T)=0\). Design-package SHR is
+\(Q_\mathrm{sens}/Q_\mathrm{coil}\), an output.
 
-`controller=auto` selects PID. The other four laws remain available
-by name.
+Gates (raise `DesignGateError`): \(p_c\le f p_\mathrm{crit}\),
+\(T_\mathrm{disch}\le T_\mathrm{disch,max}\), \(\Pi\le\Pi_\mathrm{max}\),
+SH in \([4,10]\,\mathrm{K}\), \(\mathrm{SC}\ge 0\), optional \(G_\mathrm{max}\).
 
-## 7. Time integration
+## 7. Controllers
 
-TR-BDF2 (Hosea & Shampine, 1996; MATLAB `ode23tb`): a trapezoidal
-stage to \( t+\gamma h \) and a BDF2 completion,
-\( \gamma = 2-\sqrt{2} \). The method is stiffly accurate and
-L-stable, which the pressure DAE needs. Each stage is damped Newton
-with an exact `jacfwd` Jacobian and a four-point line search. The
-embedded trapezoidal solution estimates local error; the step is
-rejected and cut when the residual stalls or the error exceeds
-tolerance. Steps are **not** cut to the record grid. A rejected step
-at \( \Delta t_\mathrm{min} \) is accepted as implicit Euler so time
-always advances. Default \( \Delta t \) bounds are \( 5\,\mathrm{ms} \)
-to \( 8\,\mathrm{s} \).
+Inner loop: superheat EEV. Low SH closes the valve; speed feedforward
+plus a slow PID trim, rate-limited.
 
-NMPC uses the same damped Newton as a differentiable implicit Euler
-step (unrolled, no adaptive \( h \)).
+**PID cascade.** Load feedforward then ISA trim (derivative on
+measurement, back-calculation anti-windup). Integral \(\mathrm{d}t\)
+clamped to \(5\,\mathrm{s}\) so QSS ZOH does not wind up.
 
-States are projected onto the property table and a temperature box
-after every accepted step.
+\[
+Q_\mathrm{need}=\begin{cases}
+UA(T_\mathrm{out}-T_\mathrm{sp})+Q_\mathrm{gain} & \text{cooling}\\
+UA(T_\mathrm{sp}-T_\mathrm{out})-Q_\mathrm{gain} & \text{heating}
+\end{cases}
+,\qquad
+N_\mathrm{ff}=N_\mathrm{design}\,\mathrm{clip}(Q_\mathrm{need}/Q_\mathrm{ref},0,1.4).
+\]
 
-For horizons of one hour or longer, `reduction="qss"` (the `auto`
-choice when \( t_\mathrm{final} \ge 3600 \)) integrates a short full-DAE
-warmup, then advances the slow states (zone temperature, and humidity
-/ frost mass when those flags are on) and relaxes the refrigerant
-state every few minutes with implicit Euler (slow states held during
-the refresh). That is the path for multi-hour and multi-day runs.
-`reduction="full"` keeps the finite-volume DAE for the whole horizon.
+\[
+N=\mathrm{sat}\bigl(N_\mathrm{ff}+k_p e+\textstyle\int k_i e\,\mathrm{d}t-k_d\dot T_z\bigr),\qquad
+e=T_\mathrm{sp}-T_z.
+\]
 
-## 8. Closed-loop simulation
+Gains scale with \(N_\mathrm{max}/70\); signs flip in cooling.
+`set_mode` flips signs and clears windup.
 
-`simulate` sizes the plant if no `PlantSpec` is given, builds tables,
-and integrates with the chosen controller. Exogenous
-\( T_\mathrm{out}(t) \), \( Q_\mathrm{gain}(t) \), and optional
-\( T_\mathrm{sp}(t) \) come from a `TimeSeries` or constants. Controls
-are held for `record_dt` (zero-order hold). QSS `u_of_t` is always
-called with **absolute** time (the local QSS clock is offset by the
-DAE warmup). `--reduction auto|full|qss` selects the integrator.
-Hour-to-day QSS runs are not a claim that the full DAE was stepped at
-millisecond resolution for the whole record.
+**Hysteresis.** On/off with deadband and min on/off times.
+**Bang-bang.** Deadband, no timers.
+**LMPC.** \(y_{k+1}=Ay_k+Bu_k+c\) from `jacfwd`, implicit Euler,
+decision \((N,u_\mathrm{eev})\).
+**NMPC.** Implicit-Euler shooting of the residual.
+`controller=auto` selects PID.
 
-## 9. Literature validation
+## 8. Time integration
 
-Unfitted comparisons to downloaded laboratory files live in
-[`validation/`](../validation/README.md). Run `python validation/run.py`.
-Citations and SHA-256 are in `validation/data/SOURCES.md`; numbers are
-in `validation/results/`. The designer is not fitted to either cabinet.
-Lee Table 6 is not scored (\( T_e,T_c \) are not tabulated).
+TR-BDF2 (Hosea & Shampine, 1996), \(\gamma=2-\sqrt{2}\): trapezoidal
+stage to \(t+\gamma h\), BDF2 completion. Damped Newton with `jacfwd`.
+Embedded trapezoidal error; reject and cut, or accept implicit Euler at
+\(\Delta t_\mathrm{min}\). Default \(\Delta t\in[5\,\mathrm{ms},\,8\,\mathrm{s}]\).
+States are projected onto the property table after each accepted step.
 
-## 10. Limitations and intended use
+`reduction="qss"` (`auto` when \(t_\mathrm{final}\ge 3600\,\mathrm{s}\)):
+short DAE warmup, then slow ODEs (\(T_z\), optional \(W_z,m_\mathrm{fr}\))
+with periodic refrigerant relax. `u_of_t` uses **absolute** time.
+`reduction="full"` keeps the DAE for the whole horizon.
 
-The model is a **controls-oriented plant**, not a rating-software
-digital twin. Coil HTCs are published correlations, not circuit-resolved
-fin-and-tube CFD. The default compressor is a clearance / polytropic
-map. An AHRI 540 polynomial is used only when a cited file supplies
-the ten coefficients. Charge is conserved by the DAE but is not a
-fitted nameplate charge. Air is dry unless the user enables moist.
+## 9. Parameters
 
-Use it to:
+Defaults below are designer / controller defaults. Sized plants overwrite
+geometry (\(V_\mathrm{disp}\), tubes, \(A_\mathrm{eev}\), \(C_z\), \(UA\)).
 
-- size a first-cut machine for a refrigerant and a load profile
-- test zone / superheat controllers, including differentiable MPC
-- study transients (pull-down, flooding, speed ramps) that moving-boundary models handle poorly
+### Design request
 
-Do not use it for AHRI / EN rating claims, refrigerant-charge
-optimization against a real cabinet, or transcritical CO2.
+| Symbol / field | Default | Meaning |
+|---|---|---|
+| refrigerant | required | CoolProp HEOS name |
+| mode | `heating` | `heating`, `cooling`, `heat_pump`, `auto` |
+| \(T_z\) | \(294.15\,\mathrm{K}\) | zone setpoint |
+| \(Q_\mathrm{heat},Q_\mathrm{cool}\) | — | nameplate duties; else peak of the CSV |
+| \(T_{\mathrm{out},\mathrm{heat}}\) | \(273.15\,\mathrm{K}\) | heating design outdoor |
+| \(T_{\mathrm{out},\mathrm{cool}}\) | \(308.15\,\mathrm{K}\) | cooling design outdoor |
+| \(\Delta T_\mathrm{evap},\Delta T_\mathrm{cond}\) | \(10,12\,\mathrm{K}\) | design approaches |
+| SH, SC | \(6,4\,\mathrm{K}\) | design superheat / subcool |
+| \(N_\mathrm{design}\) | \(50\,\mathrm{Hz}\) | design compressor frequency |
+| \(n_e,n_c\) | \(6\) | cells per coil |
+| \(V\) | \(50\,\mathrm{m}^3\) | zone volume if `C_zone` omitted |
+| indoor RH | \(0.50\) | design-package psychrometrics only |
+| voltage, phases | \(230\,\mathrm{V}\), 1 | shaft current \(I=W/V\) or \(W/(V\sqrt{3})\) |
+| \(\eta_\mathrm{motor}\) | — | applied only if supplied |
 
-## 11. Notation
+### Feasibility / actuator limits
 
-| Symbol | Meaning |
+| Symbol | Default | Meaning |
+|---|---|---|
+| \(\mathrm{SH}_\mathrm{sp}\) | \(6\,\mathrm{K}\) | EEV superheat setpoint |
+| \(\mathrm{SH}\) band | \([4,10]\,\mathrm{K}\) | gate |
+| \(\mathrm{SC}_\mathrm{min}\) | \(0\,\mathrm{K}\) | gate |
+| \(T_\mathrm{disch,max}\) | \(388.15\,\mathrm{K}\) | gate |
+| \(\Pi_\mathrm{max}\) | \(7.5\) | gate |
+| \(f=p_c/p_\mathrm{crit}\) | \(0.90\) | gate |
+| \(N_\mathrm{max}\) | \(70\,\mathrm{Hz}\) | compressor clip |
+| \(u_\mathrm{eev}\) band | \([0.10,0.72]\) | EEV clip |
+| min on / off | \(60,90\,\mathrm{s}\) | hysteresis |
+| \(T_z\) band | \(0.5\,\mathrm{K}\) | hysteresis half-width scale |
+| \(G_\mathrm{max}\) | — | optional mass-flux cap |
+
+### Plant geometry (overwritten by the sizer)
+
+| Symbol | Typical role |
 |---|---|
-| \( p_e, p_c \) | evaporator / condenser pressure |
-| \( h \) | specific enthalpy |
-| \( x \) | vapor quality |
-| \( T_w, T_z \) | wall / zone temperature |
-| \( \rho, \alpha \) | density, void fraction |
-| \( \dot m \) | mass flow |
-| \( N \) | compressor electrical frequency (Hz) |
-| \( V_\mathrm{disp} \) | displacement per revolution |
-| \( UA, C_z \) | envelope conductance, zone capacitance |
-| \( Q_\mathrm{gain} \) | exogenous heat into the zone |
-| \( Q_\mathrm{lat}, \delta_\mathrm{fr} \) | indoor latent, outdoor frost thickness |
-| \( W_z, m_\mathrm{fr} \) | zone humidity ratio, frost mass |
+| \(D,L,n_\mathrm{tubes},\mathrm{fin}\) | tube OD, length, count, air-area multiplier |
+| \(V_h\) | header volume |
+| \(V_\mathrm{disp},C,\eta_\mathrm{is},\gamma\) | displacement, clearance, isentropic efficiency, polytropic \(\gamma\) |
+| \(A_\mathrm{max},C_d\) | EEV area and discharge coefficient |
+| \(C_w\) | coil wall thermal mass |
+| \(C_z,UA\) | zone capacitance and envelope conductance |
+| \(\dot m_{a0},h_a,c_{p,a}\) | design air flow, air HTC, air specific heat |
+| \(W_\mathrm{defrost}\) | electric defrost power; \(0\) = no heater |
+| frost closure | `hayashi` or `ice` |
 
-## 12. References
+### Integrator
 
-- S. Bendapudi, J. E. Braun, and E. A. Groll, “A comparison of moving-boundary and finite-volume formulations for transients in centrifugal chillers,” *Int. J. Refrigeration*, 2008.
-- B. P. Rasmussen, “Dynamic modeling for vapor compression systems — Part I / II,” *HVAC&R Research*, 2012.
-- H. Qiao, V. Aute, and R. Radermacher, “Transient modeling of a flash tank vapor injection heat pump system,” *Int. J. Refrigeration*, 2015.
-- M. E. Hosea and L. F. Shampine, “Analysis and implementation of TR-BDF2,” *Applied Numerical Mathematics*, 1996.
-- S. M. Zivi, “Estimation of steady-state steam void-fraction by means of the principle of minimum entropy production,” *J. Heat Transfer*, 1964.
-- M. M. Shah, “A general correlation for heat transfer during film condensation inside pipes,” *Int. J. Heat Mass Transfer*, 1979.
-- J. C. Chen, “Correlation for boiling heat transfer to saturated fluids in convective flow,” *I&EC Process Design and Development*, 1966.
-- I. H. Bell, J. Wronski, S. Quoilin, and V. Lemort, “Pure and pseudo-pure fluid thermophysical property evaluation and the open-source thermophysical property library CoolProp,” *Ind. Eng. Chem. Res.*, 2014.
-- H. Ramírez-León, J. Jiménez-Cabas, and A. Bula, “Experimental data for an air-conditioning system identification,” *Data in Brief*, 2019, doi:10.1016/j.dib.2019.104316.
-- S. Ramaraj and B. Sparn, “BENEFIT with Northeastern University: HVAC Hardware-in-the-Loop Experimental Testing of Heat Pump and Air Conditioner,” NLR Data Catalog, 2024, doi:10.7799/2440214.
-- C.-Y. Lee, T. Cao, Y. Hwang, R. Radermacher, and S. Shaffer, “Development of accurate and widely applicable compressor performance maps,” *IOP Conf. Ser.: Mater. Sci. Eng.* 1180 (2021) 012041.
-- Y. Hayashi, A. Aoki, S. Adachi, and K. Hori, “Study of frost properties correlating with frost formation types,” *J. Heat Transfer*, 1977.
-- J. D. Yonko and C. F. Sepsy, “An investigation of the thermal conductivity of frost while forming on a flat horizontal plate,” *ASHRAE Trans.*, 1967.
+| Symbol | Default | Meaning |
+|---|---|---|
+| rtol, atol | \(10^{-3},10^{-5}\) | TR-BDF2 tolerances |
+| \(\Delta t_\mathrm{min},\Delta t_\mathrm{max}\) | \(5\,\mathrm{ms},8\,\mathrm{s}\) | step bounds |
+| record_dt | \(2\,\mathrm{s}\) (QSS: \(30\)–\(60\,\mathrm{s}\)) | ZOH / output grid |
+| QSS warmup | \(\sim 180\,\mathrm{s}\) | full DAE before reduction |
+| \(n_\mathrm{relax}\) | \(12\) | implicit-Euler cycle refreshes |
+
+## 10. Limitations
+
+Controls-oriented plant, not a rating twin. HTCs are published
+correlations. Charge is conserved, not fitted. Air is dry unless moist
+is enabled. Use for first-cut sizing, controller tests, and transients
+that moving-boundary models handle poorly. Do not use for AHRI/EN
+claims, charge optimization against a real cabinet, or transcritical CO2.
+
+Unfitted literature comparisons: [validation/](../validation/README.md).
+
+## 11. References
+
+- S. Bendapudi, J. E. Braun, and E. A. Groll, *Int. J. Refrigeration*, 2008.
+- B. P. Rasmussen, *HVAC&R Research*, 2012.
+- H. Qiao, V. Aute, and R. Radermacher, *Int. J. Refrigeration*, 2015.
+- M. E. Hosea and L. F. Shampine, *Applied Numerical Mathematics*, 1996.
+- S. M. Zivi, *J. Heat Transfer*, 1964.
+- M. M. Shah, *Int. J. Heat Mass Transfer*, 1979.
+- J. C. Chen, *I&EC Process Design and Development*, 1966.
+- I. H. Bell et al., *Ind. Eng. Chem. Res.*, 2014 (CoolProp).
+- H. Ramírez-León, J. Jiménez-Cabas, and A. Bula, *Data in Brief*, 2019, doi:10.1016/j.dib.2019.104316.
+- S. Ramaraj and B. Sparn, NLR Data Catalog, 2024, doi:10.7799/2440214.
+- C.-Y. Lee et al., *IOP Conf. Ser.: Mater. Sci. Eng.* 1180 (2021) 012041.
+- Y. Hayashi et al., *J. Heat Transfer*, 1977.
+- J. D. Yonko and C. F. Sepsy, *ASHRAE Trans.*, 1967.

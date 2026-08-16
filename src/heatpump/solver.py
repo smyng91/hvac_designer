@@ -11,7 +11,7 @@ embedded trapezoidal estimate exceeds the tolerance.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp

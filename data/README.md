@@ -1,7 +1,8 @@
 # Library data
 
-Cited equipment files used by the package. Laboratory traces and
-comparison scripts live in [`validation/`](../validation/README.md).
+Cited equipment files used by the package. Laboratory traces live in
+[`validation/`](../validation/README.md). Model equations:
+[docs/model.md](../docs/model.md).
 
 | Path | Contents |
 |---|---|

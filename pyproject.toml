@@ -9,22 +9,20 @@ description = "Transient two-phase vapor-compression heat pump / air conditioner
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Sam Yang"}]
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 keywords = ["heat-pump", "vapor-compression", "JAX", "HVAC", "CoolProp"]
 classifiers = [
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering",
   "Intended Audience :: Science/Research",
 ]
 dependencies = [
-  "jax>=0.4.30",
-  "numpy>=1.26",
-  "matplotlib>=3.8",
-  "CoolProp>=6.6",
+  "jax>=0.7.1",
+  "numpy>=2.2",
+  "matplotlib>=3.10",
+  "CoolProp>=8.0",
 ]
 
 [project.optional-dependencies]

@@ -2,6 +2,8 @@
 
 Nothing in this folder is synthetic. Files were downloaded from the
 publishers cited below. The designer is **not** fitted to either set.
+How the unfitted plant is scored: [validation/README.md](../README.md).
+Physics: [docs/model.md](../../docs/model.md).
 
 ## Ramírez-León et al. 2019 (primary — refrigerant known)
 
