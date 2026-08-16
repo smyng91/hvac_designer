@@ -7,7 +7,8 @@ isenthalpic electronic expansion valve (EEV), coupled to a single dry
 zone. The residual is written in JAX so the implicit integrator and
 model-predictive controllers share one plant.
 
-The implementation lives under `src/heatpump/`. SI units are used
+The implementation lives under `src/heatpump/`. Usage, examples, and
+the literature packet are in the [README](../README.md). SI units
 throughout (Pa, K, J/kg, kg/s, W, m).
 
 ## 1. Scope
@@ -23,14 +24,14 @@ Included:
 - isenthalpic EEV
 - indoor / outdoor coil remap for heating vs cooling
 - lumped zone air capacitance
+- optional zone humidity and outdoor-coil frost (off by default)
 - load-based hardware sizing
 - zone + superheat controllers (PID cascade, hysteresis, bang-bang, linear and nonlinear MPC)
 
 Not included:
 
-- moisture / latent load, frosting, or defrost
+- automatic / time-based defrost or empirical frost derate tables
 - ducts, fans as dynamic states, or multi-zone buildings
-- reversing mid-integration (run heating and cooling as two simulations)
 - transcritical gas coolers, flash tanks, or economizers
 - oil, charge migration into inactive volumes, or piping inertia
 
@@ -48,13 +49,26 @@ Modules:
 | Module | Role |
 |---|---|
 | `thermo` | CoolProp flashes → JAX \((p,h)\) tables |
-| `components` | compressor, EEV, HTC, air-side march |
+| `psychro` | humid-air tables (CoolProp HA); design-package SHR |
+| `components` | numerical kernels (clearance map, orifice, Shah, air march) |
+| `devices` | optional replacements: compressor, EEV, HTC, air-side, zone, fan, frost |
 | `plant` | finite-volume DAE residual \( \dot y = f(t,y,u) \) |
-| `solver` | TR-BDF2 + damped Newton with `jacfwd` |
+| `solver` | TR-BDF2 + implicit-Euler fallback; QSS for hours/days |
 | `design` | CoolProp design cycle and hardware sizing |
+| `capacity` | off-design \(Q(T_\mathrm{out})\) of a fixed machine |
 | `requirements` | `DesignRequest`, constraints, timeseries |
 | `control` | zone / superheat laws and MPC |
+| `catalog` | user/cited equipment list (no invented SKUs) |
+| `seasonal` | bins from the record’s dwell, not AHRI hour tables |
 | `simulate` | closed-loop integration and CLI |
+| `validation` | Ramírez / NREL / Lee comparisons |
+
+The residual calls the kernels in `components` when a `PlantSpec` slot
+is empty. A user retrofits a component by assigning an object
+(`replace(spec, compressor=MyMap(...))`). There is no name registry.
+Built-in replacements live under `devices/` (clearance compressor,
+orifice EEV, Shah/Dittus HTC, series-UA air, lumped zone, AHRI 540,
+table fan). Coils stay `CoilSpec` objects (indoor / outdoor).
 
 CoolProp is **not** called from the JIT residual. At setup the fluid is
 flashed onto a dense \((p,h)\) grid; the residual only interpolates.
@@ -111,18 +125,23 @@ distributed enthalpy / wall-temperature field. The state is
 
 \[
 y = \bigl[ p_e,\; h_e^{(1:n_e)},\; T_{w,e}^{(1:n_e)},\;
-           p_c,\; h_c^{(1:n_c)},\; T_{w,c}^{(1:n_c)},\; T_z \bigr].
+           p_c,\; h_c^{(1:n_c)},\; T_{w,c}^{(1:n_c)},\; T_z,\;
+           W_z^\mathrm{(opt)},\; m_\mathrm{fr}^\mathrm{(opt)} \bigr].
 \]
 
-Default mesh is \( n_e = n_c = 6 \) (31 states). Inputs are
+Default mesh is \( n_e = n_c = 6 \) (31 states, dry). Humidity and frost
+mass are appended only when the user sets `moist` / `frost` and supplies
+`RH_out` and `RH_zone0` — those humidities are never defaulted. Inputs are
 
 \[
 u = \bigl[ N,\; u_\mathrm{eev},\; \phi_i,\; \phi_o,\; T_\mathrm{out},\; Q_\mathrm{gain} \bigr]
 \]
 
-with compressor speed \( N \) in Hz, EEV opening in \( [0,1] \), indoor
+with optional extras \([W_\mathrm{gain},\; \mathrm{defrost},\; \mathrm{RH}_\mathrm{out}]\).
+Compressor speed \( N \) is in Hz, EEV opening in \( [0,1] \), indoor
 / outdoor fan fractions, outdoor dry-bulb, and heat **into** the zone
-(W) on top of the envelope term.
+(W) on top of the envelope term. \( W_\mathrm{gain} \) is user moisture
+into the zone (kg/s); omitted means zero, not invented infiltration.
 
 ### 4.2 Finite-volume heat exchanger
 
@@ -201,6 +220,14 @@ from the CoolProp suction state at design and held constant in the
 transient. \( \eta_\mathrm{is} \) is the user-supplied isentropic
 efficiency (constant).
 
+An AHRI 540 10-coefficient map may replace the clearance device when
+the user supplies a cited coefficient file (`PlantSpec.ahri540_path`).
+No default polynomial is invented. The published Lee et al. (2021)
+Table 5 map is shipped under `data/maps/` for that purpose. Discharge
+enthalpy is hermetic, \( h_d = h_s + W/\dot m \). Fixed-speed maps omit
+`N_rated`; \( N \) still gates the machine off near 0 Hz. Fan airflow
+is \( \dot m_0\phi \) unless the user loads a `(speed, \dot m)` table.
+
 ### 4.4 Expansion valve
 
 Isenthalpic orifice, \( h_\mathrm{eev} = h_{c,\mathrm{out}} \):
@@ -224,27 +251,58 @@ Refrigerant-side HTC is Dittus–Boelter when quality is 0 or 1,
 
 and the Shah two-phase multiplier \( F(x,p_r) \) inside the dome.
 
-Air is quasi-steady. Each wall cell sees the incoming air temperature;
-heat to the wall is \( q = h_a A_a (T_a - T_w) \), and the air
-temperature is marched downstream with \( c_{p,\mathrm{air}} \) from
-CoolProp dry air at the coil inlet temperature. Fan fraction scales
-both \( h_a \) and \( \dot m_a \). Design \( h_a \) is Zhukauskas
-cross-flow over a tube bank.
+Air is quasi-steady. The wall is eliminated from the energy close
+(series UA) so the DAE is integrable on hour-scale steps:
 
-Wall energy: \( C_w \dot T_w = -Q_\mathrm{ref} + Q_\mathrm{air} \).
+\[
+\frac{1}{UA} = \frac{1}{h_r A_r} + \frac{1}{h_a A_a}.
+\]
+
+Air is marched with that \( UA \) against the refrigerant temperature.
+Heat to the refrigerant is this equilibrium \( Q \); wall temperature
+is slaved, \( \dot T_w = (T_w^\mathrm{ss}-T_w)/\tau \) with
+\( \tau \ge 2\,\mathrm{s} \). That floor is a model reduction, not a
+capacity derate. Fan fraction scales both \( h_a \) and \( \dot m_a \).
+Design \( h_a \) is Zhukauskas cross-flow over a tube bank.
 
 ### 4.6 Zone
 
-One dry capacitance:
+One capacitance (dry by default):
 
 \[
 C_z \dot T_z = Q_\mathrm{zone} + Q_\mathrm{gain} + UA\,(T_\mathrm{out} - T_z).
 \]
 
+With `moist=True` the zone also stores humidity ratio. Leaving coil
+humidity is saturation at refrigerant temperature when that temperature
+is below the local dew point (CoolProp HA tables, interpolated in the
+residual). Latent heat is \( \dot m_a (W_\mathrm{in}-W_\mathrm{out}) h_{fg} \).
+Zone moisture is
+
+\[
+\rho V\,\dot W_z = \dot m_{a,i}(W_\mathrm{coil,out}-W_z) + W_\mathrm{gain}.
+\]
+
+Frost (`frost=True`, requires moist and user `RH_out`) grows on the
+outdoor coil when \( T_w < 273.15\,\mathrm{K} \):
+
+\[
+\dot m_\mathrm{fr} = \dot m_{a,o}\,\max(W_\mathrm{amb}-W_\mathrm{sat}(T_w),0).
+\]
+
+Layer thickness is \( \delta = m_\mathrm{fr}/(\rho A) \) with Hayashi
+(1977) density and Yonko–Sepsy (1967) conductivity (or IAPWS ice if
+requested). The extra resistance sits in series with the air-side HTC.
+Defrost melts only when the user sets the defrost flag **and**
+`W_defrost > 0`; there is no 45-minute timer and no capacity derate
+table.
+
 Sign convention: \( Q_\mathrm{air} \) is heat from air to the coil wall.
 
 - Heating: indoor coil is the condenser, \( Q_\mathrm{zone} = -\sum Q_{\mathrm{air},c} \) (positive when the coil heats the room).
-- Cooling: indoor coil is the evaporator, \( Q_\mathrm{zone} = -\sum Q_{\mathrm{air},e} \) (negative when the coil cools the room).
+- Cooling: indoor coil is the evaporator, \( Q_\mathrm{zone} = -\sum (Q_{\mathrm{air},e}+Q_{\mathrm{lat},e}) \) (negative when the coil cools the room). Dry plants have \( Q_{\mathrm{lat}}=0 \).
+
+`diagnostics()` reports the same \( Q_\mathrm{zone} \), plus indoor latent \( Q_\mathrm{lat} \) and outdoor frost thickness \( \delta_\mathrm{fr} \) when those flags are on.
 
 COP uses useful capacity: \( Q_\mathrm{zone} \) in heating,
 \( |Q_\mathrm{zone}| \) in cooling, divided by compressor power.
@@ -254,7 +312,12 @@ COP uses useful capacity: \( Q_\mathrm{zone} \) in heating,
 Indoor and outdoor geometry are stored as `CoilSpec` objects. Heating
 maps outdoor → evaporator, indoor → condenser. Cooling swaps them.
 `apply_operating_mode` copies the active pair onto the `*_e` / `*_c`
-fields the residual reads. Mid-run reversing is not modeled.
+fields the residual reads. Mid-run reverse swaps those fields and
+remaps the state (indoor/outdoor coils keep their inventory). A
+timeseries `mode` column (1=heating, 0=cooling) schedules the valve;
+on a reversible unit without that column the load sign is used, with
+a deadband and a minimum dwell. The controller flips sign and clears
+windup at each change.
 
 ## 5. Design
 
@@ -345,10 +408,10 @@ outdoor temperature.
 
 ### 5.4 Cooling psychrometrics
 
-The transient plant remains dry. The design package computes indoor
-wet-bulb and dew point from CoolProp humid air. The coil is wet when
-\( T_e \) is below the indoor dew point; leaving humidity is then
-saturation at \( T_e \). Latent heat is
+The transient plant is dry unless `moist=True` with user RH. The design
+package computes indoor wet-bulb and dew point from CoolProp humid air.
+The coil is wet when \( T_e \) is below the indoor dew point; leaving
+humidity is then saturation at \( T_e \). Latent heat is
 \( \dot m_a (W_\mathrm{in}-W_\mathrm{out}) h_{fg}(T) \) with water
 \( h_{fg} \) from CoolProp. SHR is \( Q_\mathrm{sens}/Q_\mathrm{coil} \),
 an output, not an input.
@@ -367,10 +430,12 @@ superheat, …). The inner loop is a superheat EEV: low SH closes the
 valve; a compressor-speed feedforward plus a slow PID trim set the
 opening, rate-limited so inventory can move.
 
-**PID cascade.** ISA PID on zone temperature with back-calculation
-anti-windup and derivative on measurement. Gains flip sign in cooling
-and scale with \( C_z \) and \( N_\mathrm{max} \). Compressor speed is
-rate-limited.
+**PID cascade.** Load feedforward from \( UA \), \( T_\mathrm{out} \),
+and \( Q_\mathrm{gain} \) sets a compressor speed; ISA PID is a trim
+around that (gains scale with \( N_\mathrm{max}/70 \), signs flip in
+cooling). Integral \( \mathrm{d}t \) is clamped so a QSS zero-order
+hold does not wind up. Anti-windup is back-calculation. Speed is
+rate-limited. On reverse, `set_mode` flips signs and clears windup.
 
 **Hysteresis.** On/off compressor with deadband and minimum on/off
 times (mode-aware: heat when cold, cool when hot).
@@ -387,8 +452,8 @@ constraints.
 **Nonlinear MPC.** Shooting: implicit-Euler rollout of the full
 residual, projected gradient on the input sequence.
 
-`controller=auto` picks hysteresis if the allowed speed band is
-narrower than 15 Hz, otherwise PID.
+`controller=auto` selects PID. The other four laws remain available
+by name.
 
 ## 7. Time integration
 
@@ -399,7 +464,10 @@ L-stable, which the pressure DAE needs. Each stage is damped Newton
 with an exact `jacfwd` Jacobian and a four-point line search. The
 embedded trapezoidal solution estimates local error; the step is
 rejected and cut when the residual stalls or the error exceeds
-tolerance.
+tolerance. Steps are **not** cut to the record grid. A rejected step
+at \( \Delta t_\mathrm{min} \) is accepted as implicit Euler so time
+always advances. Default \( \Delta t \) bounds are \( 5\,\mathrm{ms} \)
+to \( 8\,\mathrm{s} \).
 
 NMPC uses the same damped Newton as a differentiable implicit Euler
 step (unrolled, no adaptive \( h \)).
@@ -407,25 +475,42 @@ step (unrolled, no adaptive \( h \)).
 States are projected onto the property table and a temperature box
 after every accepted step.
 
+For horizons of one hour or longer, `reduction="qss"` (the `auto`
+choice when \( t_\mathrm{final} \ge 3600 \)) integrates a short full-DAE
+warmup, then advances the slow states (zone temperature, and humidity
+/ frost mass when those flags are on) and relaxes the refrigerant
+state every few minutes with implicit Euler (slow states held during
+the refresh). That is the path for multi-hour and multi-day runs.
+`reduction="full"` keeps the finite-volume DAE for the whole horizon.
+
 ## 8. Closed-loop simulation
 
 `simulate` sizes the plant if no `PlantSpec` is given, builds tables,
-forms \( f(t,y,u) \), and integrates with the chosen controller.
-Exogenous \( T_\mathrm{out}(t) \), \( Q_\mathrm{gain}(t) \), and
-optional \( T_\mathrm{sp}(t) \) come from a `TimeSeries` or from
-constants. Controls are held for `record_dt` (zero-order hold).
+and integrates with the chosen controller. Exogenous
+\( T_\mathrm{out}(t) \), \( Q_\mathrm{gain}(t) \), and optional
+\( T_\mathrm{sp}(t) \) come from a `TimeSeries` or constants. Controls
+are held for `record_dt` (zero-order hold). QSS `u_of_t` is always
+called with **absolute** time (the local QSS clock is offset by the
+DAE warmup). `--reduction auto|full|qss` selects the integrator.
+Hour-to-day QSS runs are not a claim that the full DAE was stepped at
+millisecond resolution for the whole record.
 
-Typical heating check (R32, 5.5 kW, 0 °C outdoor, 20 °C setpoint,
-PID, 1 h): zone settles at the setpoint, superheat near 6 K, COP
-around 3.3, charge drift well below 1 %.
+## 9. Literature validation
 
-## 9. Limitations and intended use
+Unfitted comparisons to downloaded laboratory files live in
+[`validation/`](../validation/README.md). Run `python validation/run.py`.
+Citations and SHA-256 are in `validation/data/SOURCES.md`; numbers are
+in `validation/results/`. The designer is not fitted to either cabinet.
+Lee Table 6 is not scored (\( T_e,T_c \) are not tabulated).
+
+## 10. Limitations and intended use
 
 The model is a **controls-oriented plant**, not a rating-software
 digital twin. Coil HTCs are published correlations, not circuit-resolved
-fin-and-tube CFD. The compressor is a clearance / polytropic map, not
-a manufacturer 10-coefficient polynomial. Charge is conserved by the
-DAE but is not a fitted nameplate charge. Air is dry.
+fin-and-tube CFD. The default compressor is a clearance / polytropic
+map. An AHRI 540 polynomial is used only when a cited file supplies
+the ten coefficients. Charge is conserved by the DAE but is not a
+fitted nameplate charge. Air is dry unless the user enables moist.
 
 Use it to:
 
@@ -436,7 +521,7 @@ Use it to:
 Do not use it for AHRI / EN rating claims, refrigerant-charge
 optimization against a real cabinet, or transcritical CO2.
 
-## 10. Notation
+## 11. Notation
 
 | Symbol | Meaning |
 |---|---|
@@ -450,8 +535,10 @@ optimization against a real cabinet, or transcritical CO2.
 | \( V_\mathrm{disp} \) | displacement per revolution |
 | \( UA, C_z \) | envelope conductance, zone capacitance |
 | \( Q_\mathrm{gain} \) | exogenous heat into the zone |
+| \( Q_\mathrm{lat}, \delta_\mathrm{fr} \) | indoor latent, outdoor frost thickness |
+| \( W_z, m_\mathrm{fr} \) | zone humidity ratio, frost mass |
 
-## 11. References
+## 12. References
 
 - S. Bendapudi, J. E. Braun, and E. A. Groll, “A comparison of moving-boundary and finite-volume formulations for transients in centrifugal chillers,” *Int. J. Refrigeration*, 2008.
 - B. P. Rasmussen, “Dynamic modeling for vapor compression systems — Part I / II,” *HVAC&R Research*, 2012.
@@ -461,3 +548,8 @@ optimization against a real cabinet, or transcritical CO2.
 - M. M. Shah, “A general correlation for heat transfer during film condensation inside pipes,” *Int. J. Heat Mass Transfer*, 1979.
 - J. C. Chen, “Correlation for boiling heat transfer to saturated fluids in convective flow,” *I&EC Process Design and Development*, 1966.
 - I. H. Bell, J. Wronski, S. Quoilin, and V. Lemort, “Pure and pseudo-pure fluid thermophysical property evaluation and the open-source thermophysical property library CoolProp,” *Ind. Eng. Chem. Res.*, 2014.
+- H. Ramírez-León, J. Jiménez-Cabas, and A. Bula, “Experimental data for an air-conditioning system identification,” *Data in Brief*, 2019, doi:10.1016/j.dib.2019.104316.
+- S. Ramaraj and B. Sparn, “BENEFIT with Northeastern University: HVAC Hardware-in-the-Loop Experimental Testing of Heat Pump and Air Conditioner,” NLR Data Catalog, 2024, doi:10.7799/2440214.
+- C.-Y. Lee, T. Cao, Y. Hwang, R. Radermacher, and S. Shaffer, “Development of accurate and widely applicable compressor performance maps,” *IOP Conf. Ser.: Mater. Sci. Eng.* 1180 (2021) 012041.
+- Y. Hayashi, A. Aoki, S. Adachi, and K. Hori, “Study of frost properties correlating with frost formation types,” *J. Heat Transfer*, 1977.
+- J. D. Yonko and C. F. Sepsy, “An investigation of the thermal conductivity of frost while forming on a flat horizontal plate,” *ASHRAE Trans.*, 1967.

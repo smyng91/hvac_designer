@@ -35,7 +35,15 @@ This is not an AHRI 210/240 or EN 14511 rating.
   coil rate at the sized geometry. The load line is Newton cooling or
   the timeseries Q(T_out).
 - Cooling SHR is computed from humid-air balances (CoolProp HA) with
-  apparatus dew point = T_e. The transient plant remains dry air.
+  apparatus dew point = T_e. The transient plant is dry unless the user
+  sets moist=True and supplies RH_out and RH_zone0 (no default humidity).
+- Optional frost mass uses Hayashi (1977) density and Yonko–Sepsy (1967)
+  conductivity, or IAPWS ice if requested. There is no time-based derate
+  and no automatic defrost; melt uses the user W_defrost only.
+- AHRI 540 and fan tables are used only when the user supplies a cited
+  coefficient / airflow file. No default map or SKU is invented.
+- Seasonal bins use the dwell time of the user timeseries. AHRI 210/240
+  bin-hour tables are not copied.
 - Electrical current is shaft power / voltage (or / V√3 if three-phase),
   divided by η_motor only when that efficiency is supplied.
 """
@@ -122,16 +130,18 @@ class DesignPackage:
                 f"Design margin Q_cap/Q_load = {cmap.margin_design:.2f} at "
                 f"{cmap.T_design-273.15:.1f}°C outdoor. Balance point: {bal}.",
                 "",
-                "| T_out °C | Q_cap kW | Q_load kW | COP | T_e °C | T_c °C | PR | ok |",
-                "|---:|---:|---:|---:|---:|---:|---:|:--:|",
+                "| T_out °C | Q_cap kW | Q_load kW | COP | T_e °C | T_c °C | p_e bar | p_c bar | PR | ok |",
+                "|---:|---:|---:|---:|---:|---:|---:|---:|---:|:--:|",
             ]
             for p in cmap.points:
                 te = f"{p.T_e-273.15:.1f}" if np.isfinite(p.T_e) else "—"
                 tc = f"{p.T_c-273.15:.1f}" if np.isfinite(p.T_c) else "—"
+                pe = f"{p.p_e/1e5:.2f}" if np.isfinite(p.p_e) else "—"
+                pc = f"{p.p_c/1e5:.2f}" if np.isfinite(p.p_c) else "—"
                 lines.append(
                     f"| {p.T_out-273.15:.1f} | {p.Q_cap/1e3:.2f} | "
                     f"{p.Q_load/1e3:.2f} | {p.COP:.2f} | {te} | {tc} | "
-                    f"{p.pr:.2f} | {'yes' if p.feasible else 'no'} |"
+                    f"{pe} | {pc} | {p.pr:.2f} | {'yes' if p.feasible else 'no'} |"
                 )
             lines.append("")
             for n in cmap.notes:

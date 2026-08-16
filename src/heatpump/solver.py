@@ -118,10 +118,10 @@ def make_stepper(
 
 @dataclass
 class TRBDF2:
-    rtol: float = 3.0e-4
-    atol: float = 3.0e-6
-    dt_min: float = 8.0e-4
-    dt_max: float = 1.5
+    rtol: float = 1.0e-3
+    atol: float = 1.0e-5
+    dt_min: float = 5.0e-3
+    dt_max: float = 8.0
     n_newton: int = 6
     safety: float = 0.85
     _step = None
@@ -140,44 +140,153 @@ class TRBDF2:
         return y_n, float(t_n), float(dt_n), bool(np.asarray(ok))
 
 
+def _record(rec_t, rec_y, next_rec, record_dt, t_final, t, y):
+    while next_rec <= t + 1e-12 and next_rec <= t_final + 1e-12:
+        rec_t.append(float(next_rec))
+        rec_y.append(np.asarray(y))
+        next_rec += record_dt
+    return next_rec
+
+
+def make_euler(rhs: RHS, project: PROJ | None, n_newton: int = 5):
+    """JIT implicit Euler used as a guaranteed-progress fallback and for QSS."""
+
+    def step(t, y, u, dt):
+        return implicit_euler_step(rhs, t, y, u, dt, project, n_newton)
+
+    return jax.jit(step)
+
+
+def make_qss_relax(
+    rhs: RHS,
+    project: PROJ | None,
+    i_tz: int,
+    n_relax: int,
+    dt_relax: float,
+    n_newton: int = 5,
+    slow_idx: tuple[int, ...] | None = None,
+):
+    """JIT a few implicit-Euler cycle refreshes with slow states held."""
+    hold = jnp.asarray(slow_idx if slow_idx is not None else (i_tz,))
+
+    def relax(t, y, u):
+        held = y[hold]
+
+        def body(yk, _):
+            yk = implicit_euler_step(rhs, t, yk, u, dt_relax, project, n_newton)
+            return yk.at[hold].set(held), None
+
+        y1, _ = jax.lax.scan(body, y, jnp.arange(n_relax))
+        return y1
+
+    return jax.jit(relax)
+
+
 def integrate(
     rhs: RHS,
     y0: Array,
     u_of_t: Callable[[float], Array],
     t_final: float,
-    dt0: float = 0.2,
+    dt0: float = 0.25,
     project: PROJ | None = None,
     solver: TRBDF2 | None = None,
     record_dt: float = 1.0,
-    max_steps: int = 40000,
+    max_steps: int | None = None,
     on_accept: Callable | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Adaptive TR-BDF2. Returns ``(t_hist, y_hist)`` on a uniform record grid."""
+    """Adaptive TR-BDF2. Returns ``(t_hist, y_hist)`` on a uniform record grid.
+
+    Steps are *not* cut to the record grid (that was stalling long runs).
+    A rejected step at ``dt_min`` is accepted as implicit Euler so time
+    always advances.
+    """
     solver = (solver or TRBDF2()).bind(rhs, project)
+    euler = make_euler(rhs, project)
+    if max_steps is None:
+        max_steps = int(max(t_final / max(solver.dt_min, 1e-3) * 1.3 + 2000, 20000))
+        max_steps = min(max_steps, 2_000_000)
     t = 0.0
     y = y0
-    dt = dt0
+    dt = min(float(dt0), solver.dt_max)
     rec_t = [0.0]
     rec_y = [np.asarray(y0)]
     next_rec = record_dt
     steps = 0
-    rejects = 0
     while t < t_final - 1e-12 and steps < max_steps:
         steps += 1
-        dt = min(float(dt), t_final - t)
-        if next_rec - t > solver.dt_min:
-            dt = min(dt, next_rec - t)
+        dt = min(float(dt), t_final - t, solver.dt_max)
+        dt = max(dt, solver.dt_min if t_final - t > solver.dt_min else t_final - t)
         u = jnp.asarray(u_of_t(t))
         y_n, t_n, dt_n, ok = solver.step(t, y, u, dt)
         if ok:
             y, t = y_n, t_n
-            if on_accept is not None:
-                on_accept(t, y)
-            while next_rec <= t + 1e-12 and next_rec <= t_final + 1e-12:
-                rec_t.append(float(next_rec))
-                rec_y.append(np.asarray(y))
-                next_rec += record_dt
-        else:
-            rejects += 1
+        elif dt <= solver.dt_min * 1.05:
+            y = euler(jnp.float64(t), y, u, jnp.float64(dt))
+            if project is not None:
+                y = project(y)
+            t = t + dt
+            dt_n = min(dt * 1.6, solver.dt_max)
+        # else: rejected, dt_n already cut; do not advance t
+        if on_accept is not None:
+            on_accept(t, y)
+        next_rec = _record(rec_t, rec_y, next_rec, record_dt, t_final, t, y)
         dt = dt_n
+    if rec_t[-1] < t - 1e-9 and t >= t_final - record_dt:
+        rec_t.append(float(t))
+        rec_y.append(np.asarray(y))
+    return np.asarray(rec_t), np.stack(rec_y)
+
+
+def integrate_qss(
+    rhs: RHS,
+    y0: Array,
+    u_of_t: Callable[[float], Array],
+    t_final: float,
+    *,
+    i_tz: int,
+    project: PROJ | None = None,
+    record_dt: float = 60.0,
+    refresh_s: float = 120.0,
+    n_relax: int = 12,
+    dt_relax: float = 2.0,
+    on_accept: Callable | None = None,
+    slow_idx: tuple[int, ...] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Hour-to-day integrator: slow ODEs plus periodic refrigerant relax.
+
+    Between refreshes the refrigerant state is held and only the slow
+    states (zone temperature, optional humidity and frost mass) advance
+    with the residual. Every ``refresh_s`` the full DAE is relaxed with
+    implicit Euler (slow states held) so the cycle tracks outdoor T and N.
+    """
+    hold = tuple(slow_idx) if slow_idx is not None else (i_tz,)
+    relax = make_qss_relax(rhs, project, i_tz, n_relax, dt_relax, slow_idx=hold)
+    hold_arr = jnp.asarray(hold)
+    t = 0.0
+    y = y0
+    rec_t = [0.0]
+    rec_y = [np.asarray(y0)]
+    next_rec = record_dt
+    last_refresh = -1e9
+    if on_accept is not None:
+        on_accept(t, y)
+    while t < t_final - 1e-12:
+        dt = min(record_dt, t_final - t)
+        u = jnp.asarray(u_of_t(t))
+        if t - last_refresh >= refresh_s - 1e-12:
+            y = relax(jnp.float64(t), y, u)
+            if project is not None:
+                y = project(y)
+            last_refresh = t
+        dy = rhs(jnp.float64(t), y, u)
+        y = y.at[hold_arr].set(y[hold_arr] + dt * dy[hold_arr])
+        if project is not None:
+            y = project(y)
+        t = t + dt
+        if on_accept is not None:
+            on_accept(t, y)
+        next_rec = _record(rec_t, rec_y, next_rec, record_dt, t_final, t, y)
+    if rec_t[-1] < t - 1e-9:
+        rec_t.append(float(t))
+        rec_y.append(np.asarray(y))
     return np.asarray(rec_t), np.stack(rec_y)

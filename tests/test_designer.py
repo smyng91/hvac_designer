@@ -75,8 +75,8 @@ def test_cooling_balance_and_package(tmp_path: Path):
     assert "Feasibility gates" in md
     assert "Assumptions" in md
     assert "Balance point" in md
-    assert "catalog" not in md.lower()
-    assert "frost" not in md.lower()
+    assert "no time-based derate" in md.lower()
+    assert "no default map" in md.lower() or "not invented" in md.lower()
     dest = tmp_path / "design.md"
     pkg.write(dest)
     assert dest.exists() and dest.with_suffix(".json").exists()

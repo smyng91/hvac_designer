@@ -37,6 +37,8 @@ class CapacityPoint:
     feasible: bool
     Q_min: float
     Q_max: float
+    p_e: float = float("nan")
+    p_c: float = float("nan")
     note: str = ""
 
 
@@ -258,9 +260,55 @@ def _empty_point(T: float, q_l: float, note: str) -> CapacityPoint:
         T_e=float("nan"),
         T_c=float("nan"),
         feasible=False,
+        p_e=float("nan"),
+        p_c=float("nan"),
         Q_min=0.0,
         Q_max=0.0,
         note=note,
+    )
+
+
+def capacity_at(
+    *,
+    fluid: str,
+    kind: str,
+    T_out: float,
+    T_zone: float,
+    spec: "PlantSpec",
+    SH: float = 6.0,
+    SC: float = 4.0,
+    DT_evap: float = 10.0,
+    DT_cond: float = 12.0,
+    N_hz: float | None = None,
+    eta_is: float | None = None,
+) -> CapacityPoint:
+    """Close one off-design point of a fixed machine at ``(T_out, T_zone)``."""
+    kind = "cooling" if kind == "cooling" else "heating"
+    N = spec.N_design if N_hz is None else float(N_hz)
+    eta = spec.eta_is0 if eta_is is None else float(eta_is)
+    got = _close(fluid, kind, T_out, T_zone, spec, N, SH, SC, eta, DT_evap, DT_cond)
+    if got is None:
+        return _empty_point(T_out, 0.0, "coil/cycle close failed")
+    states, meta, _res = got
+    mdot = _mdot(states, meta, spec.V_disp, N, spec.C_loss)
+    Q = mdot * (meta["q_evap"] if kind == "cooling" else meta["q_cond"])
+    W = mdot * meta["w"]
+    return CapacityPoint(
+        T_out=float(T_out),
+        Q_cap=float(Q),
+        Q_load=0.0,
+        COP=float(Q / W) if W > 1.0 else 0.0,
+        W=float(W),
+        mdot=float(mdot),
+        pr=float(meta["pr"]),
+        T_disch=float(states["2"].T),
+        T_e=float(meta["T_e"]),
+        T_c=float(meta["T_c"]),
+        feasible=True,
+        Q_min=0.0,
+        Q_max=0.0,
+        p_e=float(meta["p_e"]),
+        p_c=float(meta["p_c"]),
     )
 
 
@@ -354,6 +402,8 @@ def capacity_map(
                 feasible=True,
                 Q_min=float(Q * max(scale_min, 0.0)),
                 Q_max=float(Q * max(scale_max, 0.0)),
+                p_e=float(meta["p_e"]),
+                p_c=float(meta["p_c"]),
             )
         )
     T = np.array([p.T_out for p in points])

@@ -45,6 +45,9 @@ class TimeSeries:
     Q_gain: np.ndarray
     Tsp: np.ndarray | None = None
     mode: np.ndarray | None = None
+    W_gain: np.ndarray | None = None
+    RH_out: np.ndarray | None = None
+    defrost: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         self.t = np.asarray(self.t, dtype=float).reshape(-1)
@@ -61,6 +64,20 @@ class TimeSeries:
             self.mode = np.asarray(self.mode, dtype=float).reshape(-1)
             if self.mode.size != n:
                 raise ValueError("TimeSeries mode length must match t")
+        if self.W_gain is not None:
+            self.W_gain = np.asarray(self.W_gain, dtype=float).reshape(-1)
+            if self.W_gain.size != n:
+                raise ValueError("TimeSeries W_gain length must match t")
+        if self.RH_out is not None:
+            self.RH_out = np.asarray(self.RH_out, dtype=float).reshape(-1)
+            if self.RH_out.size != n:
+                raise ValueError("TimeSeries RH_out length must match t")
+            if float(np.nanmax(self.RH_out)) > 1.5:
+                self.RH_out = self.RH_out / 100.0
+        if self.defrost is not None:
+            self.defrost = np.asarray(self.defrost, dtype=float).reshape(-1)
+            if self.defrost.size != n:
+                raise ValueError("TimeSeries defrost length must match t")
         order = np.argsort(self.t)
         self.t = self.t[order]
         self.T_out = self.T_out[order]
@@ -69,6 +86,12 @@ class TimeSeries:
             self.Tsp = self.Tsp[order]
         if self.mode is not None:
             self.mode = self.mode[order]
+        if self.W_gain is not None:
+            self.W_gain = self.W_gain[order]
+        if self.RH_out is not None:
+            self.RH_out = self.RH_out[order]
+        if self.defrost is not None:
+            self.defrost = self.defrost[order]
 
     @property
     def duration(self) -> float:
@@ -84,6 +107,12 @@ class TimeSeries:
             out["Tsp"] = float(np.interp(x, self.t, self.Tsp))
         if self.mode is not None:
             out["mode"] = float(np.interp(x, self.t, self.mode) >= 0.5)
+        if self.W_gain is not None:
+            out["W_gain"] = float(np.interp(x, self.t, self.W_gain))
+        if self.RH_out is not None:
+            out["RH_out"] = float(np.interp(x, self.t, self.RH_out))
+        if self.defrost is not None:
+            out["defrost"] = float(np.interp(x, self.t, self.defrost))
         return out
 
     def design_peaks(self, T_zone: float) -> dict[str, float]:
@@ -134,7 +163,9 @@ class TimeSeries:
             T_out | T_out_C | Tamb | ambient
             Q | Q_W | Q_kW | Q_gain | load
 
-        Optional: ``Tsp``, ``Tsp_C``, ``mode`` (1=heating, 0=cooling).
+        Optional: ``Tsp``, ``Tsp_C``, ``mode`` (1=heating, 0=cooling),
+        ``W_gain`` (kg/s vapor into the zone; omitted → 0, not invented
+        infiltration), ``RH_out`` (0–1 or percent), ``defrost`` (0/1).
 
         ``load_kind``:
             * ``gain`` — positive Q heats the zone
@@ -180,7 +211,10 @@ class TimeSeries:
         if Tsp is not None and T_unit.lower() in ("c", "degc", "celsius"):
             Tsp = Tsp + 273.15
         mode = col("mode", "hp_mode")
-        return cls(t=t, T_out=T, Q_gain=Q, Tsp=Tsp, mode=mode)
+        Wg = col("w_gain", "moisture_gain", "m_w", "w_dot")
+        RHo = col("rh_out", "rh_amb", "rh_outdoor", "rh")
+        dfr = col("defrost", "defrost_flag")
+        return cls(t=t, T_out=T, Q_gain=Q, Tsp=Tsp, mode=mode, W_gain=Wg, RH_out=RHo, defrost=dfr)
 
 
 @dataclass

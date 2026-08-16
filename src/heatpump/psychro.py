@@ -1,18 +1,25 @@
-"""Indoor moist-air state for cooling design (CoolProp humid air).
+"""Humid-air states and JAX tables (CoolProp HA, never inside the residual).
 
-The transient plant is still dry. This module reports the sensible /
-latent split that follows from the coil duty, indoor state, and
-apparatus dew point (evaporating temperature). SHR is an output.
+Design-package SHR is an output from the coil duty, indoor state, and
+apparatus dew point. The optional moist plant interpolates the tables
+built here; CoolProp is not called from the JIT residual.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 import CoolProp.CoolProp as CP
+import jax.numpy as jnp
+import numpy as np
 from CoolProp.HumidAirProp import HAPropsSI
+from jax import Array
 
 P_ATM = 101325.0
+
+# IAPWS enthalpy of fusion of ice Ih at 273.15 K (used if CoolProp Ice fails).
+H_IF_IAPWS = 333550.0
 
 
 @dataclass(frozen=True)
@@ -117,3 +124,135 @@ def cooling_psychro(
         T_adp=adp,
         wet=wet,
     )
+
+
+@dataclass(frozen=True)
+class HumidTables:
+    """Saturation humidity and h_fg on a T grid; W(T, RH) on a 2-D grid."""
+
+    T: np.ndarray
+    W_sat: np.ndarray
+    h_fg: np.ndarray
+    RH: np.ndarray
+    W_TRH: np.ndarray
+    h_if: float
+    P: float
+
+
+def fusion_enthalpy() -> float:
+    """h_if of ice Ih at the ice–liquid equilibrium [J/kg]."""
+    for ice in ("Ice", "IF97::IceIh"):
+        try:
+            h_l = float(CP.PropsSI("H", "T", 273.16, "Q", 0, "Water"))
+            h_i = float(CP.PropsSI("H", "T", 273.16, "P", 611.657, ice))
+            val = h_l - h_i
+            if 2.5e5 < val < 4.0e5:
+                return val
+        except (ValueError, TypeError, RuntimeError):
+            continue
+    return H_IF_IAPWS
+
+
+@lru_cache(maxsize=4)
+def build_humid_tables(P: float = P_ATM, n_T: int = 91, n_RH: int = 19) -> HumidTables:
+    """Flash humid air with CoolProp once; the residual only interpolates."""
+    T = np.linspace(240.0, 330.0, n_T)
+    RH = np.linspace(0.05, 0.99, n_RH)
+    W_sat = np.full(n_T, np.nan)
+    h_fg = np.full(n_T, np.nan)
+    W_TRH = np.full((n_T, n_RH), np.nan)
+    for i, t in enumerate(T):
+        try:
+            W_sat[i] = float(HAPropsSI("W", "T", float(t), "P", P, "R", 1.0))
+        except (ValueError, TypeError, RuntimeError):
+            pass
+        try:
+            h_fg[i] = _h_fg(float(t))
+        except (ValueError, TypeError, RuntimeError):
+            pass
+        for j, rh in enumerate(RH):
+            try:
+                W_TRH[i, j] = float(HAPropsSI("W", "T", float(t), "P", P, "R", float(rh)))
+            except (ValueError, TypeError, RuntimeError):
+                pass
+    if np.isnan(W_sat).all() or np.isnan(W_TRH).all():
+        raise RuntimeError("CoolProp HAPropsSI returned no humid-air states on the table grid")
+    W_sat = _fill_1d(T, W_sat)
+    h_fg = _fill_1d(T, h_fg)
+    for j in range(n_RH):
+        W_TRH[:, j] = _fill_1d(T, W_TRH[:, j])
+    return HumidTables(
+        T=T,
+        W_sat=W_sat,
+        h_fg=h_fg,
+        RH=RH,
+        W_TRH=W_TRH,
+        h_if=fusion_enthalpy(),
+        P=float(P),
+    )
+
+
+def _fill_1d(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    ok = np.isfinite(y)
+    if not np.any(ok):
+        raise RuntimeError("no finite CoolProp samples to interpolate")
+    return np.interp(x, x[ok], y[ok])
+
+
+def _interp2(x: Array, y: Array, xg: Array, yg: Array, z: Array) -> Array:
+    x = jnp.clip(x, xg[0], xg[-1])
+    y = jnp.clip(y, yg[0], yg[-1])
+    i = jnp.clip(jnp.searchsorted(xg, x, side="right") - 1, 0, xg.size - 2)
+    j = jnp.clip(jnp.searchsorted(yg, y, side="right") - 1, 0, yg.size - 2)
+    x0, x1 = xg[i], xg[i + 1]
+    y0, y1 = yg[j], yg[j + 1]
+    tx = (x - x0) / jnp.maximum(x1 - x0, 1.0e-12)
+    ty = (y - y0) / jnp.maximum(y1 - y0, 1.0e-12)
+    return (
+        (1.0 - tx) * (1.0 - ty) * z[i, j]
+        + tx * (1.0 - ty) * z[i + 1, j]
+        + (1.0 - tx) * ty * z[i, j + 1]
+        + tx * ty * z[i + 1, j + 1]
+    )
+
+
+def jax_humid_fns(tables: HumidTables):
+    """Return JAX interpolants ``W_sat(T), h_fg(T), W(T,RH), T_dp(W), h_if``."""
+    Tg = jnp.asarray(tables.T)
+    Ws = jnp.asarray(tables.W_sat)
+    hfg = jnp.asarray(tables.h_fg)
+    RHg = jnp.asarray(tables.RH)
+    W2 = jnp.asarray(tables.W_TRH)
+    h_if = float(tables.h_if)
+
+    def W_sat_T(T: Array) -> Array:
+        return jnp.interp(T, Tg, Ws)
+
+    def h_fg_T(T: Array) -> Array:
+        return jnp.interp(T, Tg, hfg)
+
+    def W_of(T: Array, RH: Array) -> Array:
+        return _interp2(T, RH, Tg, RHg, W2)
+
+    def T_dp(W: Array) -> Array:
+        return jnp.interp(W, Ws, Tg)
+
+    return W_sat_T, h_fg_T, W_of, T_dp, h_if
+
+
+def wet_coil_march(T_ref: Array, W_in: Array, mdot: Array, W_sat_T, h_fg_T, T_dp):
+    """Sequential wet-coil humidity march. Returns ``(W_out, Q_lat_per_cell)``.
+
+    A cell condenses when ``T_ref`` is below the local dew point; leaving
+    humidity is then saturation at ``T_ref``. Latent heat uses water h_fg(T).
+    """
+    from jax import lax
+
+    def body(W, T):
+        Ws = W_sat_T(T)
+        W_next = jnp.where(T < T_dp(W), jnp.minimum(Ws, W), W)
+        Ql = mdot * (W - W_next) * h_fg_T(T)
+        return W_next, Ql
+
+    W_out, Q_lat = lax.scan(body, W_in, T_ref)
+    return W_out, Q_lat

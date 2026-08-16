@@ -1,0 +1,130 @@
+{
+  "source": {
+    "citation": "Lee, Cao, Hwang, Radermacher, Shaffer, IOP Conf. Ser.: Mater. Sci. Eng. 1180 (2021) 012041, Table 5 New Generated Map",
+    "doi": "10.1088/1757-899X/1180/1/012041",
+    "file": "validation/data/maps/lee2021_iop1180_012041.json",
+    "license": "CC BY 3.0"
+  },
+  "coefficients_match_table5": true,
+  "table4": [
+    {
+      "Te_C": 13.3,
+      "Tc_C": 58.1,
+      "T_out_C": 46.0,
+      "source": "Lee et al. 2021 Table 4",
+      "power_W": 399.6539338319201,
+      "mdot_g_s": 45.09545180199996,
+      "mdot_kg_s": 0.04509545180199996,
+      "positive": true
+    },
+    {
+      "Te_C": 13.1,
+      "Tc_C": 55.5,
+      "T_out_C": 43.0,
+      "source": "Lee et al. 2021 Table 4",
+      "power_W": 394.0060043901601,
+      "mdot_g_s": 44.63998859399996,
+      "mdot_kg_s": 0.04463998859399996,
+      "positive": true
+    },
+    {
+      "Te_C": 12.8,
+      "Tc_C": 52.9,
+      "T_out_C": 40.0,
+      "source": "Lee et al. 2021 Table 4",
+      "power_W": 389.31731580122016,
+      "mdot_g_s": 44.450640450499904,
+      "mdot_kg_s": 0.04445064045049991,
+      "positive": true
+    },
+    {
+      "Te_C": 12.6,
+      "Tc_C": 50.2,
+      "T_out_C": 37.0,
+      "source": "Lee et al. 2021 Table 4",
+      "power_W": 384.81679585215994,
+      "mdot_g_s": 44.93505969599993,
+      "mdot_kg_s": 0.04493505969599993,
+      "positive": true
+    },
+    {
+      "Te_C": 12.3,
+      "Tc_C": 48.4,
+      "T_out_C": 35.0,
+      "source": "Lee et al. 2021 Table 4",
+      "power_W": 382.79867140912006,
+      "mdot_g_s": 45.23470517549996,
+      "mdot_kg_s": 0.04523470517549996,
+      "positive": true
+    },
+    {
+      "Te_C": 12.2,
+      "Tc_C": 46.6,
+      "T_out_C": 33.0,
+      "source": "Lee et al. 2021 Table 4",
+      "power_W": 380.3892797292801,
+      "mdot_g_s": 46.164540751999986,
+      "mdot_kg_s": 0.04616454075199999,
+      "positive": true
+    },
+    {
+      "Te_C": 12.0,
+      "Tc_C": 44.8,
+      "T_out_C": 30.6,
+      "source": "Lee et al. 2021 Table 4",
+      "power_W": 378.6708737536,
+      "mdot_g_s": 47.151074303999984,
+      "mdot_kg_s": 0.047151074303999986,
+      "positive": true
+    },
+    {
+      "Te_C": 11.8,
+      "Tc_C": 42.0,
+      "T_out_C": 27.8,
+      "source": "Lee et al. 2021 Table 4",
+      "power_W": 376.15740665632,
+      "mdot_g_s": 49.465624588,
+      "mdot_kg_s": 0.049465624587999996,
+      "positive": true
+    },
+    {
+      "Te_C": 11.6,
+      "Tc_C": 40.2,
+      "T_out_C": 26.0,
+      "source": "Lee et al. 2021 Table 4",
+      "power_W": 375.2485849473601,
+      "mdot_g_s": 51.15174051599999,
+      "mdot_kg_s": 0.051151740515999994,
+      "positive": true
+    }
+  ],
+  "table4_test5": {
+    "Te_C": 12.3,
+    "Tc_C": 48.4,
+    "T_out_C": 35.0,
+    "source": "Lee et al. 2021 Table 4",
+    "power_W": 382.79867140912006,
+    "mdot_g_s": 45.23470517549996,
+    "mdot_kg_s": 0.04523470517549996,
+    "positive": true
+  },
+  "all_positive": true,
+  "notes": [
+    "Polynomial evaluated at published Table 4 dew-point setpoints.",
+    "Table 6 VapCyc system capacities are not scored: Te/Tc for those points are not tabulated.",
+    "No refrigerant is named in the paper; the map is (Te, Tc) \u2192 (\u1e41, W).",
+    "This is a compressor-map check, not a geometry-matched cabinet twin."
+  ],
+  "mdot_si_C": [
+    0.1485,
+    0.003518,
+    -0.005636,
+    0.0001661,
+    -0.0001253,
+    8.603e-05,
+    6.465000000000001e-07,
+    -2.105e-06,
+    1.114e-06,
+    -3.855e-07
+  ]
+}

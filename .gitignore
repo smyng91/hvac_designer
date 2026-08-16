@@ -21,6 +21,9 @@ pip-wheel-metadata/
 htmlcov/
 coverage.xml
 
+# Large NREL HIL traces (re-download from doi:10.7799/2440214)
+validation/data/nrel_hil/*.csv
+
 # JAX / sim artifacts
 .jax_cache/
 examples/out/

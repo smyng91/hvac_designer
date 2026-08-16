@@ -1,0 +1,12 @@
+{
+  "citation": "Example catalog listing only the published Lee et al. 2021 AHRI 540 compressor map (IOP 1180 012041, Table 5). Not a product SKU list.",
+  "items": [
+    {
+      "id": "lee2021-iop1180-012041-generated",
+      "kind": "compressor_map",
+      "standard": "AHRI 540",
+      "path": "../maps/lee2021_iop1180_012041.json",
+      "citation": "Lee, Cao, Hwang, Radermacher, Shaffer, IOP Conf. Ser.: Mater. Sci. Eng. 1180 (2021) 012041, Table 5 New Generated Map"
+    }
+  ]
+}

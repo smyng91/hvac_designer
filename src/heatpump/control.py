@@ -20,8 +20,18 @@ class ControlOutput:
     fan_i: float = 1.0
     fan_o: float = 1.0
 
-    def as_input(self, T_out: float, Q_load: float) -> np.ndarray:
-        return np.array([self.N, self.eev, self.fan_i, self.fan_o, T_out, Q_load], dtype=np.float64)
+    def as_input(
+        self,
+        T_out: float,
+        Q_load: float,
+        W_gain: float = 0.0,
+        defrost: float = 0.0,
+        RH_out: float | None = None,
+    ) -> np.ndarray:
+        core = [self.N, self.eev, self.fan_i, self.fan_o, T_out, Q_load]
+        if RH_out is None and W_gain == 0.0 and defrost == 0.0:
+            return np.array(core, dtype=np.float64)
+        return np.array(core + [W_gain, defrost, 0.0 if RH_out is None else RH_out], dtype=np.float64)
 
 
 @dataclass
@@ -44,15 +54,17 @@ class PID:
 
     def update(self, sp: float, y: float, dt: float) -> float:
         e = sp - y
+        # QSS / coarse ZOH can pass 30–60 s; do not integrate that as a single dt.
+        dt_i = float(np.clip(dt, 1e-6, 5.0))
         if self._y_f is None:
             self._y_f = y
-        a = dt / (self.d_tau + dt)
+        a = dt_i / (self.d_tau + dt_i)
         y_prev = self._y_f
         self._y_f = (1.0 - a) * self._y_f + a * y
-        d = -self.kd * (self._y_f - y_prev) / max(dt, 1e-6)
+        d = -self.kd * (self._y_f - y_prev) / dt_i
         u_unsat = self.kp * e + self._i + d
         u = float(np.clip(u_unsat, self.umin, self.umax))
-        self._i += self.ki * e * dt + self.kaw * (u - u_unsat) * dt
+        self._i += self.ki * e * dt_i + self.kaw * (u - u_unsat) * dt_i
         return u
 
 
@@ -163,6 +175,9 @@ class Cascade:
     mode: str = "heating"
     N_rate: float = 8.0
     N_max: float = 80.0
+    N_design: float = 50.0
+    UA: float = 0.0
+    Q_design: float = 0.0
     _N: float = 0.0
 
     def reset(self) -> None:
@@ -171,25 +186,57 @@ class Cascade:
         self.eev.reset()
         self._N = 0.0
 
+    def set_mode(self, mode: str) -> None:
+        """Flip heating/cooling action and clear windup. Used on reverse."""
+        mode = "cooling" if mode == "cooling" else "heating"
+        if mode == self.mode:
+            return
+        self.mode = mode
+        if hasattr(self.speed, "mode"):
+            self.speed.mode = mode
+        if self.kind == "pid" and hasattr(self.speed, "kp"):
+            s = -1.0 if mode == "cooling" else 1.0
+            self.speed.kp = s * abs(self.speed.kp)
+            self.speed.ki = s * abs(self.speed.ki)
+            self.speed.kd = s * abs(self.speed.kd)
+        self.reset()
+
+    def _feedforward(self, meas: dict) -> float:
+        """Speed that holds the setpoint against UA and Q_gain (trim is PID)."""
+        if self.kind != "pid":
+            return 0.0
+        T_out = meas.get("T_out")
+        if T_out is None or self.UA <= 0.0:
+            return 0.0
+        Qg = float(meas.get("Q_gain", 0.0))
+        if self.mode == "cooling":
+            Q_need = self.UA * (float(T_out) - self.Tsp) + Qg
+        else:
+            Q_need = self.UA * (self.Tsp - float(T_out)) - Qg
+        Q_ref = self.Q_design if self.Q_design > 200.0 else max(self.UA * 20.0, 500.0)
+        return float(np.clip(Q_need / Q_ref, 0.0, 1.4) * self.N_design)
+
     def update(self, t: float, meas: dict, dt: float) -> ControlOutput:
         Tz = float(meas["T_z"])
         if self.kind == "pid":
-            N_cmd = self.speed.update(self.Tsp, Tz, dt)
+            N_cmd = self._feedforward(meas) + self.speed.update(self.Tsp, Tz, dt)
         elif self.kind == "hysteresis":
             N_cmd = self.speed.update(t, Tz, self.Tsp)
         elif self.kind == "bangbang":
             N_cmd = self.speed.update(Tz, self.Tsp)
         else:
             raise ValueError(self.kind)
-        dN = float(np.clip(N_cmd - self._N, -self.N_rate * dt, self.N_rate * dt))
+        N_cmd = float(np.clip(N_cmd, 0.0, self.N_max))
+        dN = float(np.clip(N_cmd - self._N, -self.N_rate * min(dt, 5.0), self.N_rate * min(dt, 5.0)))
         self._N = float(np.clip(self._N + dN, 0.0, self.N_max))
         eev = self.eev.update(float(meas["SH"]), dt, compressor_on=self._N > 6.0, N=self._N)
         return ControlOutput(N=self._N, eev=float(eev), fan_i=self.fan_i, fan_o=self.fan_o)
 
 
 def scaled_pid_gains(spec, constraints, mode: str) -> tuple[float, float, float]:
-    scale = (1.9e5 / max(float(spec.C_zone), 2.0e4)) * (constraints.N_max / 70.0)
-    kp, ki, kd = 5.5 * scale, 0.07 * scale, 2.5 * scale
+    """Trim around load feedforward. Signs: heating +e → +N, cooling +e → −N."""
+    scale = constraints.N_max / 70.0
+    kp, ki, kd = 4.0 * scale, 0.06 * scale, 1.2 * scale
     if mode == "cooling":
         return -abs(kp), -abs(ki), -abs(kd)
     return kp, ki, kd
@@ -211,8 +258,9 @@ def make_cascade(
             kp, ki, kd = scaled_pid_gains(spec, cons, mode)
         else:
             s = -1.0 if mode == "cooling" else 1.0
-            kp, ki, kd = s * 5.5, s * 0.07, s * 2.5
-        speed = PID(kp=kp, ki=ki, kd=kd, umin=cons.N_min, umax=cons.N_max, kaw=0.3)
+            kp, ki, kd = s * 4.0, s * 0.06, s * 1.2
+        # Trim around feedforward; full range so a large zone error can still saturate.
+        speed = PID(kp=kp, ki=ki, kd=kd, umin=-cons.N_max, umax=cons.N_max, kaw=0.4)
     elif kind == "hysteresis":
         speed = HysteresisThermostat(
             deadband=max(1.2, 2.0 * cons.T_zone_band),
@@ -223,6 +271,8 @@ def make_cascade(
         )
     else:
         speed = BangBang(N_on=min(55.0, cons.N_max), mode=mode)
+    N_des = float(getattr(spec, "N_design", 50.0) or 50.0) if spec is not None else 50.0
+    UA = float(getattr(spec, "UA_env", 0.0) or 0.0) if spec is not None else 0.0
     return Cascade(
         speed=speed,
         eev=SuperheatEEV(sh_sp=cons.SH_sp),
@@ -230,6 +280,8 @@ def make_cascade(
         kind=kind if kind != "bang-bang" else "bangbang",
         mode=mode,
         N_max=cons.N_max,
+        N_design=N_des,
+        UA=UA,
     )
 
 
@@ -274,6 +326,10 @@ class LinearMPC:
 
     def reset(self) -> None:
         self._U = None
+
+    def set_mode(self, mode: str) -> None:
+        self.mode = "cooling" if mode == "cooling" else "heating"
+        self.reset()
 
     def _ensure_lin(self):
         if self._lin is not None:
@@ -392,6 +448,10 @@ class NonlinearMPC:
 
     def reset(self) -> None:
         self._U = None
+
+    def set_mode(self, mode: str) -> None:
+        del mode
+        self.reset()
 
     def _ensure(self, u_exog: Array):
         if self._grad is not None:
