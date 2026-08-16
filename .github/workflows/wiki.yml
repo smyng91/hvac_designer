@@ -54,5 +54,10 @@ jobs:
             exit 0
           fi
           git commit -m "Publish docs from ${GITHUB_SHA}"
-          git push -u origin HEAD
+          if ! git push -u origin HEAD; then
+            echo "::error::Wiki git repo does not exist yet. While logged in as the owner, open"
+            echo "https://github.com/${GITHUB_REPOSITORY}/wiki and click Create the first page,"
+            echo "then re-run this workflow."
+            exit 1
+          fi
 
