@@ -17,8 +17,8 @@ a short warmup. Plots and design files go to `output/`.
 | Script | What it does |
 |---|---|
 | `examples/design.py` | Size from conditions (no transient) → `output/design.md` |
-| `examples/heating.py` | R32 heat pump, 5.5 kW, \(0^\circ\mathrm{C}\) / \(20^\circ\mathrm{C}\) |
-| `examples/cooling.py` | R410A AC, 6.2 kW, \(35^\circ\mathrm{C}\) / \(24^\circ\mathrm{C}\) |
+| `examples/heating.py` | R32 heat pump, 5.5 kW, $`0^\circ\mathrm{C}`$ / $`20^\circ\mathrm{C}`$ |
+| `examples/cooling.py` | R410A AC, 6.2 kW, $`35^\circ\mathrm{C}`$ / $`24^\circ\mathrm{C}`$ |
 | `examples/reverse.py` | One reversible unit: cool, then heat |
 | `examples/weather.py` | Size and run from a CSV; bins = this record’s dwell |
 | `examples/run_all.py` | Design, heating, cooling, reverse, weather cooling |
@@ -83,9 +83,9 @@ python -m heatpump.simulate --mode heating -r R32 --load 5500 \
 
 | Flag | Role |
 |---|---|
-| `--weather` | CSV of \(t\), \(T_\mathrm{out}\), \(Q\); duty = peak of the record |
+| `--weather` | CSV of $`t`$, $`T_\mathrm{out}`$, $`Q`$; duty = peak of the record |
 | `--load` / `--load-tons` | optional nameplate override |
-| `--reduction auto\|full\|qss` | `auto` → QSS if \(t\ge 3600\,\mathrm{s}\) |
+| `--reduction auto\|full\|qss` | `auto` → QSS if $`t\ge 3600\,\mathrm{s}`$ |
 | `--moist --frost --RH-out --RH-zone` | humidity / frost (RH is not defaulted) |
 | `--ahri540` | cited AHRI 540 JSON (no silent map) |
 | `--seasonal` | bins from this record’s dwell, not AHRI hours |
@@ -95,7 +95,7 @@ With neither `--weather` nor `--load`, the CLI sizes a 5.5 kW heating demo.
 ## Weather CSV
 
 Required: time, outdoor temperature, load. Optional: `Tsp_C`, `mode`
-(\(1\)=heating, \(0\)=cooling), `RH_out`, `W_gain`, `defrost`.
+($`1`$=heating, $`0`$=cooling), `RH_out`, `W_gain`, `defrost`.
 
 ```
 t,T_out_C,Q_kW,Tsp_C
@@ -103,8 +103,8 @@ t,T_out_C,Q_kW,Tsp_C
 600,35,6.2,24
 ```
 
-\(Q\) is heat **into** the zone unless `--load-kind cooling_load` or
-`heating_load`. When the CSV is the complete load, envelope \(UA=0\).
+$`Q`$ is heat **into** the zone unless `--load-kind cooling_load` or
+`heating_load`. When the CSV is the complete load, envelope $`UA=0`$.
 
 ## Validation
 
@@ -116,4 +116,5 @@ python validation/lee2021_map.py
 Unfitted designer vs downloaded lab files. Citations:
 [`validation/data/SOURCES.md`](../validation/data/SOURCES.md).
 
-Physics and every symbol: [model.md](model.md).
+Physics and every symbol: [model.md](model.md)
+([wiki](https://github.com/smyng91/hvac_designer/wiki/Model)).

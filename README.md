@@ -5,13 +5,16 @@ CoolProp properties, finite-volume two-phase coils, and a stiff TR-BDF2
 integrator (QSS for hour-to-day runs). The same residual is the plant
 inside MPC.
 
-| | |
-|---|---|
-| Quick start | [docs/quickstart.md](docs/quickstart.md) |
-| Model | [docs/model.md](docs/model.md) |
-| Examples | [examples/](examples/README.md) |
-| Validation | [validation/](validation/README.md) |
-| Cited maps | [data/](data/README.md) |
+Equations render on the
+**[wiki](https://github.com/smyng91/hvac_designer/wiki)**.
+
+| | Source | Wiki |
+|---|---|---|
+| Quick start | [docs/quickstart.md](docs/quickstart.md) | [Quick start](https://github.com/smyng91/hvac_designer/wiki/Quick-start) |
+| Model | [docs/model.md](docs/model.md) | [Model](https://github.com/smyng91/hvac_designer/wiki/Model) |
+| Examples | [examples/](examples/README.md) | [Examples](https://github.com/smyng91/hvac_designer/wiki/Examples) |
+| Validation | [validation/](validation/README.md) | [Validation](https://github.com/smyng91/hvac_designer/wiki/Validation) |
+| Cited maps | [data/](data/README.md) | [Data](https://github.com/smyng91/hvac_designer/wiki/Data) |
 
 ## Install
 
@@ -33,7 +36,7 @@ pytest
 ```
 
 Outputs: `output/`. `--t-final 90` keeps the full DAE.
-Tutorial: [docs/quickstart.md](docs/quickstart.md).
+Tutorial: [Quick start](docs/quickstart.md).
 
 ## Scope
 
