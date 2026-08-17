@@ -17,6 +17,7 @@ output/
 /paper/
 /paper.tex
 /paper.pdf
+/scripts/
 
 # Raw validation downloads (see validation/data/SOURCES.md)
 validation/data/ramirez2019_mmc1.xlsx
