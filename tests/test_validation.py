@@ -109,11 +109,17 @@ def test_nrel_parser_skips_or_reads_downloaded_csvs():
         pytest.skip("NREL CSVs not downloaded (see validation/data/SOURCES.md)")
     kinds = {p["kind"] for p in pts}
     assert kinds <= {"cooling", "heating"}
+    from_cache = all(p.get("cached_on_period") for p in pts)
     for p in pts:
         assert p["n_on"] > 0
         assert p["Q_W"] > 1000.0
         assert p["W_out_W"] > 500.0
-        assert p.get("primary_source") is True
-        assert p.get("cached_on_period") is False
         assert p.get("Q_air_W") is not None
         assert p.get("sha256")
+        if from_cache:
+            # Raw 1 Hz HIL files are gitignored; CI uses validation/results/nrel_on_period.csv.
+            assert p.get("primary_source") is False
+            assert p.get("cached_on_period") is True
+        else:
+            assert p.get("primary_source") is True
+            assert p.get("cached_on_period") is False

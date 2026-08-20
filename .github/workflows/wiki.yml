@@ -11,7 +11,7 @@ on:
       - validation/data/SOURCES.md
       - data/README.md
       - data/maps/SOURCES.md
-      - scripts/github_md.py
+      - .github/scripts/github_md.py
       - .github/workflows/wiki.yml
   workflow_dispatch:
 
@@ -35,7 +35,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python scripts/github_md.py --wiki /tmp/wiki-src
+          python .github/scripts/github_md.py --wiki /tmp/wiki-src
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git"
           if git clone "$remote" /tmp/wiki; then
             rsync -a --delete --exclude .git /tmp/wiki-src/ /tmp/wiki/
