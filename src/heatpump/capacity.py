@@ -4,7 +4,7 @@ A fixed machine (displacement + coil geometry) is closed at each outdoor
 temperature so refrigerant-side ṁ Δh equals the ε-NTU coil heat rate.
 Saturation temperatures are solved; they are not held at the design
 approach. The load line is Newton cooling UA |T_z − T_out|, or the
-timeseries Q interpolated against outdoor temperature.
+time-series Q interpolated against outdoor temperature.
 """
 
 from __future__ import annotations
@@ -359,7 +359,7 @@ def capacity_map(
         "Saturation temperatures are closed so ṁ Δh equals the ε-NTU coil "
         "heat rate (Dittus–Boelter / Shah refrigerant, Zhukauskas air).",
         "Load line is UA |T_zone − T_out| when UA > 0, otherwise the "
-        "timeseries Q interpolated on outdoor temperature.",
+        "time-series Q interpolated on outdoor temperature.",
     ]
     for T, q_l in zip(T_grid, Q_load):
         got = _close(

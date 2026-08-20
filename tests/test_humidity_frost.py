@@ -7,8 +7,17 @@ import numpy as np
 import pytest
 
 from heatpump.design import heating_spec
+from heatpump.devices.frost import ICE_K, ICE_RHO, hayashi_density, sanders_k
 from heatpump.plant import diagnostics, initial_state, make_rhs, unpack_state
 from heatpump.thermo import build_tables
+
+
+def test_frost_property_closures_match_published_coefficients():
+    assert float(hayashi_density(jnp.asarray(273.15))) == pytest.approx(650.0)
+    rho = 200.0
+    assert float(sanders_k(jnp.asarray(rho))) == pytest.approx(0.001202 * rho**0.963)
+    assert ICE_RHO == pytest.approx(916.7)
+    assert ICE_K == pytest.approx(2.22)
 
 
 def test_dry_layout_unchanged():

@@ -756,7 +756,7 @@ def compare_nrel(points: list[dict] | None = None) -> dict:
     The NREL readme does not name the refrigerant. The comparison uses
     R410A because that is the fluid of the Ramírez unit and of US
     residential 3-ton SEER-16 equipment of that generation — it is an
-    assumption, labelled as such, not a measured fact from doi:10.7799/2440214.
+    assumption, labeled as such, not a measured fact from doi:10.7799/2440214.
     """
     if points is None:
         points = parse_nrel()

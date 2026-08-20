@@ -98,7 +98,7 @@ def _mode_segments(
 ) -> list[tuple[float, float, str]]:
     """Split the horizon at reversing-valve changes.
 
-    Uses the timeseries ``mode`` column when present (1=heating, 0=cooling).
+    Uses the time-series ``mode`` column when present (1=heating, 0=cooling).
     On a reversible unit without that column, infer from ``Q_gain`` with a
     200 W deadband and a 5 min minimum dwell (no chatter).
     """
@@ -563,7 +563,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--ahri540", default=None, help="AHRI 540 coefficient JSON (published or user; no silent default)")
     p.add_argument("--fan-table", default=None, help="CSV of speed,mdot_kg_s (user/manufacturer; no invented curve)")
     p.add_argument("--catalog", default=None, help="user catalog JSON (example lists only the cited Lee 2021 map)")
-    p.add_argument("--seasonal", action="store_true", help="bin the --weather timeseries (hours from the record, not AHRI tables)")
+    p.add_argument("--seasonal", action="store_true", help="bin the --weather time series (hours from the record, not AHRI tables)")
     p.add_argument("--bin-width", type=float, default=5.0, help="seasonal outdoor-T bin width [K]")
     args = p.parse_args(argv)
 

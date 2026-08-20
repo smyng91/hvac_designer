@@ -2,7 +2,7 @@
   "source": {
     "citation": "Lee, Cao, Hwang, Radermacher, Shaffer, IOP Conf. Ser.: Mater. Sci. Eng. 1180 (2021) 012041, Table 5 New Generated Map",
     "doi": "10.1088/1757-899X/1180/1/012041",
-    "file": "data/maps/lee2021_iop1180_012041.json",
+    "file": "validation/data/maps/lee2021_iop1180_012041.json",
     "license": "CC BY 3.0"
   },
   "coefficients_match_table5": true,

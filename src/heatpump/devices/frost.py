@@ -15,11 +15,12 @@ import jax.numpy as jnp
 HAYASHI_RHO0 = 650.0
 HAYASHI_B = 0.277
 
-# Yonko & Sepsy, "An investigation of the thermal conductivity of frost
-# while forming on a flat horizontal plate," ASHRAE Trans. 73 (1967).
+# Sanders, "The influence of frost formation and defrosting on the
+# performance of air coolers," Ph.D. thesis, Delft Univ. of Tech., 1974.
 # k = 0.001202 ρ^0.963  [W/m·K] with ρ in kg/m³.
-YONKO_A = 0.001202
-YONKO_N = 0.963
+# Yonko & Sepsy (1967) is the quadratic k(ρ), not this power law.
+SANDERS_A = 0.001202
+SANDERS_N = 0.963
 
 # IAPWS ice Ih at 0 °C (used only when the user asks for solid ice, not frost).
 ICE_RHO = 916.7
@@ -32,9 +33,9 @@ def hayashi_density(T_w: Array) -> Array:
     return HAYASHI_RHO0 * jnp.exp(HAYASHI_B * Ts)
 
 
-def yonko_sepsy_k(rho: Array) -> Array:
-    """Yonko & Sepsy (1967) frost conductivity [W/m·K]."""
-    return YONKO_A * jnp.maximum(rho, 1.0) ** YONKO_N
+def sanders_k(rho: Array) -> Array:
+    """Sanders (1974) frost conductivity [W/m·K]."""
+    return SANDERS_A * jnp.maximum(rho, 1.0) ** SANDERS_N
 
 
 def frost_layer(T_w: Array, m_fr: Array, A: Array | float, closure: str) -> tuple[Array, Array, Array]:
@@ -44,11 +45,11 @@ def frost_layer(T_w: Array, m_fr: Array, A: Array | float, closure: str) -> tupl
         k = jnp.full_like(T_w, ICE_K)
     elif closure == "hayashi":
         rho = hayashi_density(T_w)
-        k = yonko_sepsy_k(rho)
+        k = sanders_k(rho)
     else:
         raise ValueError(
-            f"unknown frost closure {closure!r}; use 'hayashi' (Hayashi 1977 + "
-            "Yonko–Sepsy 1967) or 'ice' (IAPWS ice Ih at 0 °C)"
+            f"unknown frost closure {closure!r}; use 'hayashi' (Hayashi 1977 "
+            "density + Sanders 1974 conductivity) or 'ice' (IAPWS ice Ih at 0 °C)"
         )
     delta = jnp.maximum(m_fr, 0.0) / jnp.maximum(rho * A, 1.0e-9)
     return delta, k, rho

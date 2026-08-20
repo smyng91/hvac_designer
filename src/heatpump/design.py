@@ -708,7 +708,7 @@ def design_system(request: DesignRequest | None = None, **kwargs) -> SystemDesig
     req = request if request is not None else DesignRequest(**kwargs)
     if req.mode == "auto":
         raise ValueError(
-            "mode='auto' needs a load/ambient timeseries so capacity can be inferred "
+            "mode='auto' needs a load/ambient time series so capacity can be inferred "
             "from the setpoint. Pass timeseries= or --weather, or set mode explicitly."
         )
     notes: list[str] = []
@@ -744,7 +744,7 @@ def design_system(request: DesignRequest | None = None, **kwargs) -> SystemDesig
     if req.mode in ("heating", "heat_pump"):
         if req.Q_heat is None or req.Q_heat < 200.0:
             raise ValueError(
-                "No heating duty to size from. Provide a load/ambient timeseries "
+                "No heating duty to size from. Provide a load/ambient time series "
                 "(positive heating_load or negative Q_gain) at the setpoint, or Q_heat [W]."
             )
         heating = _design_mode(req.refrigerant, "heating", req.Q_heat, req.T_out_heat, req.T_zone_heat, **common)
@@ -752,7 +752,7 @@ def design_system(request: DesignRequest | None = None, **kwargs) -> SystemDesig
     if req.mode in ("cooling", "heat_pump"):
         if req.Q_cool is None or req.Q_cool < 200.0:
             raise ValueError(
-                "No cooling duty to size from. Provide a load/ambient timeseries "
+                "No cooling duty to size from. Provide a load/ambient time series "
                 "(positive Q_gain / cooling_load) at the setpoint, or Q_cool [W] / cooling_tons."
             )
         cooling = _design_mode(req.refrigerant, "cooling", req.Q_cool, req.T_out_cool, req.T_zone_cool, **common)

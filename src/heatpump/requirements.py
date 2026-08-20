@@ -1,4 +1,4 @@
-"""Design requirements, operating constraints, and exogenous timeseries."""
+"""Design requirements, operating constraints, and exogenous time series."""
 
 from __future__ import annotations
 

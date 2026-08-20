@@ -27,6 +27,7 @@ validation/data/maps/
 # Regenerated audit plots
 validation/results/audit*.png
 validation/results/audit*.json
+harness.py
 
 # Editor / OS
 .DS_Store

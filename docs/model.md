@@ -57,9 +57,11 @@ Each coil has one pressure (acoustic equilibrium) and a distributed
 enthalpy / wall field.
 
 ```math
-y=\bigl[p_e,\; h_e^{(1:n_e)},\; T_{w,e}^{(1:n_e)},\;
-        p_c,\; h_c^{(1:n_c)},\; T_{w,c}^{(1:n_c)},\; T_z,\;
-        W_z^{(\mathrm{opt})},\; m_\mathrm{fr}^{(\mathrm{opt})}\bigr].
+\begin{aligned}
+y=\bigl[&p_e,\; h_e^{(1:n_e)},\; T_{w,e}^{(1:n_e)},\\
+&p_c,\; h_c^{(1:n_c)},\; T_{w,c}^{(1:n_c)},\; T_z,\\
+&W_z^{(\mathrm{opt})},\; m_\mathrm{fr}^{(\mathrm{opt})}\bigr].
+\end{aligned}
 ```
 
 Default mesh $`n_e=n_c=6`$ (27 states, dry). $`W_z`$ and $`m_\mathrm{fr}`$
@@ -97,9 +99,11 @@ $`(p,q)`$. Single-phase: $`(h,p)`$.
 Quality inside the dome and Zivi void fraction:
 
 ```math
-x=\frac{h-h_f}{h_g-h_f},\qquad
-\alpha=\left[1+\frac{1-x}{x}\left(\frac{\rho_g}{\rho_f}\right)^{2/3}\right]^{-1},\qquad
-\rho=\alpha\rho_g+(1-\alpha)\rho_f.
+\begin{aligned}
+x&=\frac{h-h_f}{h_g-h_f},\\
+\alpha&=\left[1+\frac{1-x}{x}\left(\frac{\rho_g}{\rho_f}\right)^{2/3}\right]^{-1},\\
+\rho&=\alpha\rho_g+(1-\alpha)\rho_f.
+\end{aligned}
 ```
 
 `build_tables` uses a log-$`p`$ grid to $`0.92\,p_c`$ and a linear $`h`$
@@ -117,9 +121,11 @@ Method of lines (Bendapudi / Rasmussen / Qiao): one pressure per coil,
 upwind enthalpy, linear internal mass-flow profile.
 
 ```math
-\frac{\partial\rho}{\partial t}+\frac{\partial(\rho v)}{\partial z}=0,\qquad
+\begin{aligned}
+\frac{\partial\rho}{\partial t}+\frac{\partial(\rho v)}{\partial z}&=0,\\
 \frac{\partial(\rho h)}{\partial t}+\frac{\partial(\rho v h)}{\partial z}
-=\frac{\partial p}{\partial t}+\frac{P}{A}q''.
+&=\frac{\partial p}{\partial t}+\frac{P}{A}q''.
+\end{aligned}
 ```
 
 Per cell, well-mixed energy, upwind inlet $`h^\mathrm{up}`$:
@@ -130,7 +136,7 @@ Per cell, well-mixed energy, upwind inlet $`h^\mathrm{up}`$:
 ```
 
 ```math
-\dot m(z)=\dot m_\mathrm{in}(1-\xi)+\dot m_\mathrm{out}\,\xi,\qquad \xi\in[0,1].
+\dot m(\xi)=\dot m_\mathrm{in}(1-\xi)+\dot m_\mathrm{out}\,\xi,\qquad \xi\in[0,1].
 ```
 
 Evaporator ports: EEV $`\to`$ suction. Condenser ports: discharge $`\to`$ EEV.
@@ -142,7 +148,32 @@ M=\sum_i\rho_i V_i+V_h\langle\rho\rangle,\qquad
 +\Bigl(\frac{\partial\rho}{\partial h}\Bigr)_p\mathrm{d}h.
 ```
 
+The residual pressure ODE is the discrete mass balance on that inventory
+(uniform cells; header terms use mean cell slopes):
+
+```math
+\dot h_i^\mathrm{rhs}=\frac{\dot m_i^\mathrm{in}(h_i^\mathrm{up}-h_i)+Q_i}{\rho_i V_i}.
+```
+
+```math
+\begin{aligned}
+\mathrm{num}
+&=(\dot m_\mathrm{in}-\dot m_\mathrm{out})
+-\sum_i V_i(\partial\rho_i/\partial h)_p\dot h_i^\mathrm{rhs}\\
+&\quad-V_h\langle(\partial\rho/\partial h)_p\dot h^\mathrm{rhs}\rangle,\\
+\mathrm{den}
+&=\sum_i V_i(\partial\rho_i/\partial p)_h
++V_h\langle(\partial\rho/\partial p)_h\rangle\\
+&\quad+\sum_i V_i\rho_i^{-1}(\partial\rho_i/\partial h)_p
++V_h\langle\rho^{-1}(\partial\rho/\partial h)_p\rangle,\\
+\frac{\mathrm{d}p}{\mathrm{d}t}&=\frac{\mathrm{num}}{\mathrm{den}},\qquad
+\frac{\mathrm{d}h_i}{\mathrm{d}t}=\dot h_i^\mathrm{rhs}+\rho_i^{-1}\frac{\mathrm{d}p}{\mathrm{d}t}.
+\end{aligned}
+```
+
 Both density derivatives are kept (omitting the $`h`$ term drifts charge).
+The discrete mass balance is consistent with $`p(t)`$ on the mesh; it does
+not imply that numerical inventory is conserved to machine precision.
 A moving-boundary coil is not used.
 
 Internal volumes:
@@ -159,18 +190,21 @@ Clearance volumetric efficiency and polytropic isentropic rise
 ($`\Pi=p_d/p_s`$):
 
 ```math
-\eta_v=1-C\bigl(\Pi^{1/\gamma}-1\bigr),\qquad
-\dot m=\eta_v\,\rho_s\,V_\mathrm{disp}\,N_\mathrm{eff},
+\begin{aligned}
+\eta_v&=1-C\bigl(\Pi^{1/\gamma}-1\bigr),\\
+N_\mathrm{eff}&=N\,\sigma\bigl(1.5(N-4)\bigr),\\
+\dot m&=\eta_v\,\rho_s\,V_\mathrm{disp}\,N_\mathrm{eff}.
+\end{aligned}
 ```
 
-```math
-N_\mathrm{eff}=N\,\sigma\bigl(1.5(N-4)\bigr),
-```
+$`\sigma`$ is a logistic sigmoid. Then
 
 ```math
-\Delta h_\mathrm{is}=\frac{\gamma}{\gamma-1}\frac{p_s}{\rho_s}\bigl(\Pi^{(\gamma-1)/\gamma}-1\bigr),\qquad
-h_d=h_s+\Delta h_\mathrm{is}/\eta_\mathrm{is},\qquad
-W=\dot m(h_d-h_s).
+\begin{aligned}
+\Delta h_\mathrm{is}&=\frac{\gamma}{\gamma-1}\frac{p_s}{\rho_s}\bigl(\Pi^{(\gamma-1)/\gamma}-1\bigr),\\
+h_d&=h_s+\Delta h_\mathrm{is}/\eta_\mathrm{is},\\
+W&=\dot m(h_d-h_s).
+\end{aligned}
 ```
 
 $`\gamma`$ is taken at the design suction state and held. $`\eta_\mathrm{is}`$
@@ -179,8 +213,10 @@ is constant. $`C`$ is clearance.
 AHRI 540 (only if a cited file is supplied), $`T_s,T_d`$ dew points in °C:
 
 ```math
-X=C_1+C_2 T_s+C_3 T_d+C_4 T_s^2+C_5 T_s T_d+C_6 T_d^2
-+C_7 T_s^3+C_8 T_s^2 T_d+C_9 T_s T_d^2+C_{10} T_d^3.
+\begin{aligned}
+X&=C_1+C_2 T_s+C_3 T_d+C_4 T_s^2+C_5 T_s T_d+C_6 T_d^2\\
+&\quad+C_7 T_s^3+C_8 T_s^2 T_d+C_9 T_s T_d^2+C_{10} T_d^3.
+\end{aligned}
 ```
 
 $`X`$ is power (W) or mass flow. Hermetic close: $`h_d=h_s+W/\dot m`$.
@@ -191,10 +227,14 @@ Lee 2021 Table 5 is in `data/maps/`. No default polynomial.
 Isenthalpic, $`h_\mathrm{eev}=h_{c,\mathrm{out}}`$:
 
 ```math
-\dot m=C_d A_\mathrm{max}u\sqrt{2\rho\,\Delta p_+}.
+\begin{aligned}
+\dot m&=C_d A_\mathrm{max}u\sqrt{2\rho\,\Delta p_+},\\
+\Delta p_+&=\tfrac12\bigl(\Delta p+\sqrt{\Delta p^2+\varepsilon^2}\bigr),
+\end{aligned}
 ```
 
-$`\Delta p_+`$ is a $`C^1`$ soft-plus so the Jacobian exists at $`\Delta p=0`$.
+with $`\Delta p=p_\mathrm{in}-p_\mathrm{out}`$ and $`\varepsilon=20\,\mathrm{kPa}`$.
+The $`C^1`$ soft-plus keeps the Jacobian defined at $`\Delta p=0`$.
 
 ### 5.4 Heat transfer
 
@@ -205,19 +245,46 @@ Single-phase Dittus–Boelter; two-phase Shah multiplier $`F(x,p_r)`$:
 n=0.4\ \text{(evap)},\ 0.3\ \text{(cond)}.
 ```
 
-Air is quasi-steady. Series UA:
+Inside the dome a Shah-type multiplier $`F(x,p_r)`$ is applied to that
+single-phase coefficient (not the full Shah 1979 correlation). With
+$`x_s=\mathrm{clip}(x,10^{-3},1-10^{-3})`$ and $`p_r=p/p_\mathrm{crit}`$,
+
+```math
+X_{tt}=\bigl((1-x_s)/x_s\bigr)^{0.9}p_r^{0.15}.
+```
+
+```math
+\begin{aligned}
+F_\mathrm{e}&=1+1.8\,X_{tt}^{-0.7}+8x_s(1-x_s),\\
+F_\mathrm{c}&=(1-x_s)^{0.8}+3.8\,x_s^{0.76}(1-x_s)^{0.04}p_r^{-0.38}.
+\end{aligned}
+```
+
+Two-phase HTC is $`h_\mathrm{sp}\max(F,1)`$. Air is quasi-steady. Series UA:
 
 ```math
 \frac{1}{UA}=\frac{1}{h_r A_r}+\frac{1}{h_a A_a}.
 ```
 
 Air is marched cell-wise against the **refrigerant** temperature with
-that series $`UA`$ (not against $`T_w`$). Heat to the refrigerant is
-this equilibrium $`Q`$. A slaved wall ODE
-$`\dot T_w=(T_w^\mathrm{ss}-T_w)/\tau`$ with $`\tau\ge 2\,\mathrm{s}`$
+that series $`UA`$ (not against $`T_w`$). Heat from air to cell $`i`$ is
+$`q_i=UA_i(T_{\mathrm{air},i}-T_{\mathrm{ref},i})`$, and
+$`T_{\mathrm{air},i+1}=T_{\mathrm{air},i}-q_i/(\dot m_a c_{p,a})`$.
+That equilibrium $`Q`$ is the heat to the refrigerant. A slaved wall ODE
 is integrated for frost and diagnostics; $`T_w`$ does not enter the
-air-to-refrigerant energy close. Fan fraction scales $`h_a`$ and
-$`\dot m_a`$. Design $`h_a`$: Zhukauskas tube-bank.
+air-to-refrigerant energy close:
+
+```math
+\begin{aligned}
+T_w^\mathrm{ss}&=T_\mathrm{ref}+Q/(h_r A_r),\\
+\dot T_w&=(T_w^\mathrm{ss}-T_w)/\tau,\\
+\tau&=\max\bigl(C_w/(n\cdot 400),\,2\,\mathrm{s}\bigr).
+\end{aligned}
+```
+
+The floor on $`\tau`$ keeps the wall equation integrable; it is not a
+capacity derate. Fan fraction scales $`h_a`$ and $`\dot m_a`$. Design
+$`h_a`$: Zhukauskas $`\mathrm{Nu}=0.27\,\mathrm{Re}^{0.63}\,\mathrm{Pr}^{0.36}`$.
 
 Sign: $`Q_\mathrm{air}`$ is heat from air to the coil.
 
@@ -260,15 +327,21 @@ Q_\mathrm{lat}=\dot m_a(W_\mathrm{in}-W_\mathrm{out})h_{fg},\qquad
 \rho V\,\dot W_z=\dot m_{a,i}(W_\mathrm{coil,out}-W_z)+W_\mathrm{gain}.
 ```
 
-Frost (requires moist) on the outdoor coil when $`T_w<273.15\,\mathrm{K}`$:
+Frost (requires moist) grows on the outdoor coil when the mean wall is
+below freezing. The humidity sink is the wet-coil march (leaving humidity
+is saturation at refrigerant $`T`$), not $`W_\mathrm{sat}(T_w)`$:
 
 ```math
-\dot m_\mathrm{fr}=\dot m_{a,o}\max(W_\mathrm{amb}-W_\mathrm{sat}(T_w),0),\qquad
-\delta=\frac{m_\mathrm{fr}}{\rho_\mathrm{fr}A}.
+\begin{aligned}
+\dot m_\mathrm{fr}&=\dot m_{a,o}\max(W_\mathrm{in}-W_\mathrm{out},0)
+\quad(T_w<273.15\,\mathrm{K}),\\
+\delta&=m_\mathrm{fr}/(\rho_\mathrm{fr}A).
+\end{aligned}
 ```
 
-Hayashi (1977) density and Yonko–Sepsy (1967) conductivity
-($`T_s`$ in °C, $`\rho`$ in kg/m³):
+Hayashi (1977) density and Sanders (1974) conductivity
+($`T_s`$ is wall temperature in °C, used as the frost-surface proxy;
+$`\rho`$ in kg/m³):
 
 ```math
 \rho_\mathrm{fr}=650\exp(0.277\,T_s),\qquad
@@ -284,7 +357,7 @@ if the defrost flag is set **and** $`W_\mathrm{defrost}>0`$.
 
 Heating: outdoor $`\to`$ evap, indoor $`\to`$ cond. Cooling swaps.
 `apply_operating_mode` copies the active pair onto `*_e` / `*_c`.
-Mid-run reverse remaps state (coils keep inventory). Timeseries `mode`
+Mid-run reverse remaps state (coils keep inventory). The time-series `mode`
 ($`1`$=heat, $`0`$=cool) schedules the valve; without it, load sign
 plus deadband and minimum dwell. The controller flips sign and clears
 windup.
@@ -292,9 +365,7 @@ windup.
 ## 6. Design
 
 Four-point CoolProp cycle: (1) dew + SH, (2) polytropic discharge
-enthalpy matching the JAX residual,
-$`h_1+\Delta h_\mathrm{is}/\eta_\mathrm{is}`$ with
-$`\Delta h_\mathrm{is}=\frac{\gamma}{\gamma-1}(p_s/\rho_s)(\Pi^{(\gamma-1)/\gamma}-1)`$,
+enthalpy matching the residual in section 5.2,
 (3) bubble − SC, (4) $`h_3`$ at $`p_e`$. Pass `compression='heos'` to
 use CoolProp $`h(p_c,s_1)`$ instead.
 
@@ -309,8 +380,11 @@ rejected. Useful duty sets $`\dot m`$ (condenser heat in heating,
 evaporator heat in cooling).
 
 ```math
-V_\mathrm{disp}=\frac{\dot m}{\eta_v\rho_1 N_\mathrm{design}},\qquad
-u_\mathrm{design}=0.40.
+\begin{aligned}
+V_\mathrm{disp}&=\frac{\dot m}{\eta_v\rho_1 N_\mathrm{design}},\\
+A_\mathrm{max}&=\frac{\dot m}{C_d u_\mathrm{des}\sqrt{2\rho_3(p_c-p_e)}},\qquad
+u_\mathrm{des}=0.40.
+\end{aligned}
 ```
 
 Tube count is iterated until ε-NTU $`Q`$ equals cycle duty. Air flow
@@ -325,7 +399,7 @@ consistency step, not a laboratory fit. Pass `match_plant=False` to keep
 the algebraic inversion only. Coarse meshes (`n_e<6`) skip it unless
 `match_plant=True`.
 
-From a timeseries with no nameplate:
+From a time series with no nameplate:
 
 ```math
 Q_\mathrm{cool}=\max(Q_\mathrm{gain},0),\qquad
@@ -360,7 +434,9 @@ Q_\mathrm{need}=\begin{cases}
 UA(T_\mathrm{out}-T_\mathrm{sp})+Q_\mathrm{gain} & \text{cooling}\\
 UA(T_\mathrm{sp}-T_\mathrm{out})-Q_\mathrm{gain} & \text{heating}
 \end{cases}
-,\qquad
+```
+
+```math
 N_\mathrm{ff}=N_\mathrm{design}\,\mathrm{clip}(Q_\mathrm{need}/Q_\mathrm{ref},0,1.4).
 ```
 
@@ -374,17 +450,33 @@ Gains scale with $`N_\mathrm{max}/70`$; signs flip in cooling.
 
 **Hysteresis.** On/off with deadband and min on/off times.
 **Bang-bang.** Deadband, no timers.
-**LMPC.** $`y_{k+1}=Ay_k+Bu_k+c`$ from `jacfwd`, implicit Euler,
-decision $`(N,u_\mathrm{eev})`$.
+**LMPC.** Implicit Euler on the residual: $`A=(I-\Delta t\,\partial f/\partial y)^{-1}`$,
+then $`y_{k+1}=A y_k+B u_k+c`$ with $`B`$ and $`c`$ from `jacfwd`.
+Decision $`(N,u_\mathrm{eev})`$.
 **NMPC.** Implicit-Euler shooting of the residual.
 `controller=auto` selects PID.
 
 ## 8. Time integration
 
 TR-BDF2 (Hosea & Shampine, 1996), $`\gamma=2-\sqrt{2}`$: trapezoidal
-stage to $`t+\gamma h`$, BDF2 completion. Damped Newton with `jacfwd`.
-Embedded trapezoidal error; reject and cut, or accept implicit Euler at
-$`\Delta t_\mathrm{min}`$. Default $`\Delta t\in[5\,\mathrm{ms},\,8\,\mathrm{s}]`$.
+stage of length $`\gamma h`$, then BDF2 completion to $`t+h`$.
+
+```math
+\begin{aligned}
+y_{n+\gamma}-y_n&=\tfrac12\gamma h\bigl(f(t,y_n)+f(t+\gamma h,y_{n+\gamma})\bigr),\\
+y_{n+1}&=a y_{n+\gamma}+b y_n+c h\,f(t+h,y_{n+1}),
+\end{aligned}
+```
+
+```math
+a=\frac{1}{\gamma(2-\gamma)},\quad
+b=-\frac{(1-\gamma)^2}{\gamma(2-\gamma)},\quad
+c=\frac{1-\gamma}{2-\gamma}.
+```
+
+Damped Newton with `jacfwd`. Embedded trapezoidal error; reject and cut,
+or accept implicit Euler at $`\Delta t_\mathrm{min}`$. Default
+$`\Delta t\in[5\,\mathrm{ms},\,8\,\mathrm{s}]`$.
 States are projected onto the property table after each accepted step.
 
 `reduction="qss"` (`auto` when $`t_\mathrm{final}\ge 3600\,\mathrm{s}`$):
@@ -458,7 +550,7 @@ geometry ($`V_\mathrm{disp}`$, tubes, $`A_\mathrm{eev}`$, $`C_z`$, $`UA`$).
 
 ## 10. Limitations
 
-Controls-oriented plant, not a rating twin. HTCs are published
+Control-oriented plant, not a rating twin. HTCs are published
 correlations. Charge is conserved, not fitted. Air is dry unless moist
 is enabled. Use for first-cut sizing, controller tests, and transients
 that moving-boundary models handle poorly. Do not use for AHRI/EN
@@ -481,4 +573,4 @@ Unfitted literature comparisons: [validation/](../validation/README.md).
 - S. Ramaraj and B. Sparn, NLR Data Catalog, 2024, doi:10.7799/2440214.
 - C.-Y. Lee, T. Cao, Y. Hwang, R. Radermacher, and S. Shaffer, *IOP Conf. Ser.: Mater. Sci. Eng.* 1180 (2021) 012041.
 - Y. Hayashi et al., *J. Heat Transfer*, 1977.
-- J. D. Yonko and C. F. Sepsy, *ASHRAE Trans.*, 1967.
+- C. T. Sanders, Ph.D. thesis, Delft University of Technology, 1974.

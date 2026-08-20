@@ -55,17 +55,6 @@ class TableFan:
             citation=src,
         )
 
-    @classmethod
-    def from_plant(cls, spec) -> TableFan:
-        path = getattr(spec, "fan_path", None)
-        cite = getattr(spec, "fan_citation", None)
-        if not path:
-            raise TypeError(
-                "TableFan requires a user or manufacturer airflow file "
-                "(PlantSpec.fan_path). No default curve is invented."
-            )
-        return cls.from_file(path, citation=cite)
-
     def mdot(self, speed: Array, mdot0: float) -> Array:
         del mdot0
         return jnp.interp(speed, jnp.asarray(self.speed), jnp.asarray(self.mdot_kg_s))

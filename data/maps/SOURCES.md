@@ -16,8 +16,10 @@ Nothing in this folder is a fitted or invented coefficient set.
 - Power is watts; mass flow in the paper is g/s (converted to kg/s on load).
 
 ```math
-X=C_1+C_2 T_s+C_3 T_d+C_4 T_s^2+C_5 T_s T_d+C_6 T_d^2
-+C_7 T_s^3+C_8 T_s^2 T_d+C_9 T_s T_d^2+C_{10} T_d^3.
+\begin{aligned}
+X&=C_1+C_2 T_s+C_3 T_d+C_4 T_s^2+C_5 T_s T_d+C_6 T_d^2\\
+&\quad+C_7 T_s^3+C_8 T_s^2 T_d+C_9 T_s T_d^2+C_{10} T_d^3.
+\end{aligned}
 ```
 
 - Table 6 is a VapCyc *system* close. Te and Tc for those two points are

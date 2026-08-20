@@ -1,4 +1,4 @@
-"""Seasonal bins from a *user* outdoor timeseries.
+"""Seasonal bins from a *user* outdoor time series.
 
 Hours in each bin are the dwell time of the supplied record. AHRI 210/240
 bin-hour tables are not copied (copyright, and they are not this climate).
@@ -46,7 +46,7 @@ class SeasonalBins:
 
     def to_markdown(self) -> str:
         lines = [
-            "# Seasonal bins from the supplied timeseries",
+            "# Seasonal bins from the supplied time series",
             "",
             f"Bin width {self.width_K:.1f} K. Total {self.hours_total:.1f} h "
             "from the record dwell times (not an AHRI climate table).",
@@ -116,7 +116,7 @@ def bin_timeseries(
     edges = np.arange(T_lo0, T_hi0 + 0.5 * width_K, width_K)
     bins: list[OutdoorBin] = []
     notes = [
-        "Hours are the dwell time of the supplied timeseries, not AHRI 210/240 bin hours.",
+        "Hours are the dwell time of the supplied time series, not AHRI 210/240 bin hours.",
         "Q_cap / W are interpolated from the closed capacity map when one is passed; "
         "they are omitted when no map is available (not invented).",
     ]

@@ -38,7 +38,7 @@ for f in Test_Matrix.xlsx \
 
 The NREL readme does **not** name the refrigerant. Model comparisons use
 R410A as an assumption (US residential 3-ton SEER-16 class in 2024) and
-are labelled as such.
+are labeled as such.
 
 ## Lee et al. 2021 (compressor map — not a cabinet twin)
 

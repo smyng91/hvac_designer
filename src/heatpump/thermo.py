@@ -375,8 +375,8 @@ def eval_ph(tables: PropertyTables, p: Array, h: Array) -> PHState:
 
     ``T``, ``x``, ``ρ``, ``μ``, ``k``, and ``c_p`` are interpolated
     independently on the flashed grid. Density slopes come only from the
-    ``ρ(p,h)`` surface. Off-dome the interpolated ``(T,x,ρ)`` need not
-    satisfy a single CoolProp flash.
+    ``ρ(p,h)`` surface. Off-dome, the interpolated ``(T,x,ρ)`` do not
+    necessarily satisfy a single CoolProp flash.
     """
     p = jnp.clip(p, tables.p[0], tables.p[-1])
     h = jnp.clip(h, tables.h[0], tables.h[-1])

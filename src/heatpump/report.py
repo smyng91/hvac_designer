@@ -37,16 +37,16 @@ This is not an AHRI 210/240 or EN 14511 rating.
   ρ_air c_p V.
 - Off-design capacity re-closes T_e and T_c so ṁ Δh equals the ε-NTU
   coil rate at the sized geometry. The load line is Newton cooling or
-  the timeseries Q(T_out).
+  the time-series Q(T_out).
 - Cooling SHR is computed from humid-air balances (CoolProp HA) with
   apparatus dew point = T_e. The transient plant is dry unless the user
   sets moist=True and supplies RH_out and RH_zone0 (no default humidity).
-- Optional frost mass uses Hayashi (1977) density and Yonko–Sepsy (1967)
+- Optional frost mass uses Hayashi (1977) density and Sanders (1974)
   conductivity, or IAPWS ice if requested. There is no time-based derate
   and no automatic defrost; melt uses the user W_defrost only.
 - AHRI 540 and fan tables are used only when the user supplies a cited
   coefficient / airflow file. No default map or SKU is invented.
-- Seasonal bins use the dwell time of the user timeseries. AHRI 210/240
+- Seasonal bins use the dwell time of the user time series. AHRI 210/240
   bin-hour tables are not copied.
 - Electrical current is shaft power / voltage (or / V√3 if three-phase),
   divided by η_motor only when that efficiency is supplied.
